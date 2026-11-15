@@ -1,8 +1,8 @@
 """Jev (TypeSafe System One) behind a domain-level interface.
 
-Jev only answers semantic questions: which catalog value a free-text order means, and whether a
-carrier's free-text note rules an order out. Prices, distances, ranking and explanations never go
-through it. Questions are batched into one request because every request has a fixed token cost.
+Jev only answers semantic questions: which catalog value a free-text order means, and whether an
+order's free text and a carrier's free-text description are compatible. Prices, distances, ranking and
+explanations never go through it. Questions are batched into one request because every request has a fixed token cost.
 """
 
 import time
@@ -34,9 +34,10 @@ class OrderClassification:
 
 
 @dataclass(frozen=True, slots=True)
-class NotesCheck:
-    block_probability: Mapping[str, float]  # carrier name -> P(note rules the order out)
+class CompatibilityCheck:
+    conflict_probability: Mapping[str, float]  # carrier name -> P(the order and the carrier do not fit)
     elapsed_ms: int
+    requested: ChoiceResult | None = None  # which carrier the order note asks for (NO_REQUEST = none)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +51,9 @@ class JevClient(Protocol):
         self, text: str, cargo_types: Sequence[str] | None, container_sizes: Sequence[int] | None
     ) -> OrderClassification: ...
 
-    def notes_block_order(self, order: Order, notes: Mapping[str, str]) -> NotesCheck: ...
+    def check_compatibility(
+        self, order: Order, order_note: str, carrier_notes: Mapping[str, str], requestable: Sequence[str] = ()
+    ) -> CompatibilityCheck: ...
 
     def note_has_restriction(self, note: str) -> NotePrecheck: ...
 
@@ -61,10 +64,14 @@ CARGO_DESCRIPTIONS = {
     "Reefer": "perishable; must be refrigerated or frozen",
     "Hazardous": "dangerous goods: flammable, explosive, toxic, corrosive, gases, lithium batteries",
 }
-NOTE_BLOCKS: NoulCriteria = {
-    "true": "The note states a restriction that this order violates.",
-    "false": "The note has no restriction, or none of its restrictions apply to this order.",
+CONFLICT: NoulCriteria = {
+    "true": "Clear conflict for this carrier: the order note refuses it or demands something its description "
+    "contradicts, or its description excludes this order.",
+    "false": "No clear conflict for this carrier. Asking for another carrier, a note about other carriers, "
+    "or missing information is not a conflict.",
 }
+NO_REQUEST = "no_specific_carrier"
+REQUESTED = "Which carrier does the order note explicitly ask to use? Refusing a carrier is not asking for one."
 NOTE_RESTRICTS = (
     "Does this carrier description restrict which orders the carrier accepts "
     "(cargo, container sizes, routes, distances, dates)?"
@@ -96,23 +103,39 @@ class TypesafeJevClient:
             elapsed_ms=elapsed,
         )
 
-    def notes_block_order(self, order: Order, notes: Mapping[str, str]) -> NotesCheck:
-        names = list(notes)
-        state = {
-            "order": {
-                "origin": order.origin,
-                "destination": order.destination,
-                "container_size_ft": order.container_size,
-                "cargo_type": order.cargo_type,
-            },
-            "carrier_notes": dict(notes),
+    def check_compatibility(
+        self, order: Order, order_note: str, carrier_notes: Mapping[str, str], requestable: Sequence[str] = ()
+    ) -> CompatibilityCheck:
+        """One request for all candidates: does the order (and its note) fit each carrier's description?
+
+        With `requestable` (every carrier name, eligible or not) the same request also asks which carrier
+        the note asks for, so an ineligible requested carrier can still be named with its reasons.
+        """
+        names = list(carrier_notes)
+        order_state: dict[str, Any] = {
+            "origin": order.origin,
+            "destination": order.destination,
+            "container_size_ft": order.container_size,
+            "cargo_type": order.cargo_type,
         }
-        questions = {
-            f"c{i}": Noul(instructions=f"Does carrier_notes['{name}'] rule out this order?", criteria=NOTE_BLOCKS)
+        if order_note:
+            order_state["note"] = order_note
+        state = {"order": order_state, "carrier_descriptions": {name: carrier_notes[name] for name in names}}
+        questions: dict[str, Any] = {
+            f"c{i}": Noul(
+                instructions=f"Is carrier '{name}' ruled out for this order by the order note "
+                "or by its own description?",
+                criteria=CONFLICT,
+            )
             for i, name in enumerate(names)
         }
+        if order_note and requestable:
+            labels: dict[str, str | None] = {name: None for name in requestable}
+            labels[NO_REQUEST] = "The note asks for no specific carrier"
+            questions["requested"] = Choice(instructions=REQUESTED, criteria=labels)
         result, elapsed = self._ask(state, questions)
-        return NotesCheck({name: result.nouls[f"c{i}"].noul for i, name in enumerate(names)}, elapsed)
+        conflicts = {name: result.nouls[f"c{i}"].noul for i, name in enumerate(names)}
+        return CompatibilityCheck(conflicts, elapsed, _choice(result, "requested"))
 
     def note_has_restriction(self, note: str) -> NotePrecheck:
         result, elapsed = self._ask(note, {"restricts": Noul(instructions=NOTE_RESTRICTS)})

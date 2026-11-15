@@ -1,0 +1,41 @@
+{# Draft editor: the order travels in hidden inputs; arrows re-render the draft, only "Kaydet" writes the file. #}
+<form id="ranking-editor" hx-target="this" hx-swap="outerHTML">
+  <table>
+    <thead><tr><th>#</th><th>Kriter</th><th></th></tr></thead>
+    <tbody>
+    {% for c in editor["items"] %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td><input type="hidden" name="ranking" value="{{ c.key }}"><strong>{{ c.label }}</strong> <code class="muted">{{ c.key }}</code></td>
+        <td class="actions">
+          <button type="button" class="secondary outline" title="Yukarı" hx-post="/admin/rules/ranking/draft"
+                  hx-vals='{"op": "up:{{ c.key }}"}' {% if loop.first %}disabled{% endif %}>↑</button>
+          <button type="button" class="secondary outline" title="Aşağı" hx-post="/admin/rules/ranking/draft"
+                  hx-vals='{"op": "down:{{ c.key }}"}' {% if loop.last %}disabled{% endif %}>↓</button>
+          <button type="button" class="secondary outline" hx-post="/admin/rules/ranking/draft"
+                  hx-vals='{"op": "remove:{{ c.key }}"}'>Çıkar</button>
+        </td>
+      </tr>
+    {% endfor %}
+      <tr class="muted"><td>{{ editor["items"] | length + 1 }}</td><td>Firma adı <code>name</code></td><td>her zaman son eşitlik bozucu</td></tr>
+    </tbody>
+  </table>
+
+  {% if editor["available"] %}
+    <p class="actions"><span class="muted">Kullanılmayan kriterler:</span>
+    {% for c in editor["available"] %}
+      <button type="button" class="outline" hx-post="/admin/rules/ranking/draft" hx-vals='{"op": "add:{{ c.key }}"}'>+ {{ c.label }}</button>
+    {% endfor %}
+    </p>
+  {% endif %}
+
+  {% if editor["error"] %}<p><span class="badge bad">Kaydedilemedi</span> {{ editor["error"] }}</p>{% endif %}
+  {% if editor["message"] %}<p><span class="badge ok">{{ editor["message"] }}</span></p>{% endif %}
+  {% if editor["dirty"] %}<p class="muted">Kaydedilmemiş değişiklik var.</p>{% endif %}
+
+  <div class="actions">
+    <button type="button" hx-post="/admin/rules/ranking" {% if not editor["dirty"] %}disabled{% endif %}>Kaydet</button>
+    <button type="button" class="secondary" hx-post="/admin/rules/ranking/draft" hx-vals='{"op": "reset"}'
+            {% if not editor["dirty"] %}disabled{% endif %}>Vazgeç</button>
+  </div>
+</form>

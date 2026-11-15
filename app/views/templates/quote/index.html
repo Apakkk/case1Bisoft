@@ -3,9 +3,11 @@
 {% block content %}
 <hgroup>
   <h2>Teklif al</h2>
-  <p><code>POST /api/v1/quotes</code> ile aynı servis. Konteyner veya yük tipi boş bırakılırsa açıklamadan çıkarılır
-     (önce kural, gerekirse Jev).</p>
+  <p><code>POST /api/v1/quotes</code> ile aynı servis. Sipariş açıklaması yazılırsa Jev her uygun firmanın
+     açıklamasıyla karşılaştırır; uyumsuz firma elenir. Konteyner veya yük tipi boş bırakılırsa açıklamadan çıkarılır.</p>
 </hgroup>
+<p class="muted">Geçerli öncelik: {{ ranking | join(" → ") }} · <a href="/admin/rules">değiştir</a><br>
+   Sipariş açıklamasında istenen firma varsa ve uygunsa önce o önerilir.</p>
 <form hx-post="/admin/quote" hx-target="#result">
   <div class="grid">
     <label>Çıkış <input name="origin" value="Miami" required></label>
@@ -23,8 +25,9 @@
       </select>
     </label>
   </div>
-  <label>Yük açıklaması <span class="muted">opsiyonel; ör. "20'lik konteynerde donmuş karides"</span>
-    <textarea name="cargo_description" rows="2"></textarea>
+  <label>Sipariş açıklaması <span class="muted">opsiyonel; ör. "20'lik konteynerde donmuş karides",
+    "S-Logistics ile çalışmak istemiyorum"</span>
+    <textarea name="description" rows="2"></textarea>
   </label>
   <button type="submit">Teklif al</button>
 </form>

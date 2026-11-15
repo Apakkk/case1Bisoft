@@ -50,9 +50,10 @@ def test_response_shape_for_the_tie_case(client: TestClient) -> None:
     assert data["currency"] == "USD"
     assert data["distance"] == {"miles": "660", "source": "case_table", "approximate": False}
     assert data["ranking"] == [
-        {"carrier": "B-Logistics", "total_cost": "660.00", "hq_distance_miles": "30"},
-        {"carrier": "M-Logistics", "total_cost": "660.00", "hq_distance_miles": "1190"},
+        {"carrier": "B-Logistics", "total_cost": "660.00", "hq_distance_miles": "30", "requested": False},
+        {"carrier": "M-Logistics", "total_cost": "660.00", "hq_distance_miles": "1190", "requested": False},
     ]
+    assert data["requested_carrier"] is None
     assert {r["carrier"] for r in data["rejected"]} == {"S-Logistics", "A-Logistics"}
     assert data["jev_calls"] == []
     assert "belirleyici kriter: merkezin çıkış noktasına uzaklığı" in data["explanation"]
@@ -75,6 +76,23 @@ def test_bad_orders_are_422_with_an_error_code(client: TestClient, body: dict[st
 
 def test_schema_violations_are_422(client: TestClient) -> None:
     assert client.post("/api/v1/quotes", json={"destination": "Miami"}).status_code == 422
+
+
+def test_unknown_fields_are_rejected_not_ignored(client: TestClient) -> None:
+    body = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
+
+    response = client.post("/api/v1/quotes", json={**body, "cargo_description": "S-Logistics olmasın"})
+
+    assert response.status_code == 422
+
+
+def test_order_description_without_jev_needs_review(client: TestClient) -> None:
+    body = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
+
+    data = client.post("/api/v1/quotes", json={**body, "description": "S-Logistics olmasın"}).json()
+
+    assert (data["status"], data["carrier"]) == ("needs_review", "S-Logistics")
+    assert any("kontrol edilemedi" in w for w in data["warnings"])
 
 
 def test_invalid_rules_file_is_reported_not_hidden() -> None:

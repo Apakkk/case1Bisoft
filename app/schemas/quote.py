@@ -15,20 +15,31 @@ if TYPE_CHECKING:
 
 class QuoteRequest(BaseModel):
     model_config = ConfigDict(
+        extra="forbid",  # an unknown field (e.g. a misspelled "description") is a 422, never silently ignored
         json_schema_extra={
             "examples": [
                 {"origin": "Miami", "destination": "Atlanta", "container_size": 20, "cargo_type": "Reefer"},
-                {"origin": "Miami", "destination": "Atlanta", "cargo_description": "20'lik konteynerde donmuş karides"},
+                {"origin": "Miami", "destination": "Atlanta", "description": "20'lik konteynerde donmuş karides"},
+                {
+                    "origin": "Miami",
+                    "destination": "Orlando",
+                    "container_size": 40,
+                    "cargo_type": "Dry",
+                    "description": "S-Logistics ile çalışmak istemiyorum",
+                },
             ]
-        }
+        },
     )
 
     origin: str = Field(min_length=1, max_length=100)
     destination: str = Field(min_length=1, max_length=100)
     container_size: int | None = Field(default=None, gt=0, description="Feet; must be in the catalog")
     cargo_type: str | None = Field(default=None, max_length=50, description="Catalog value, case-insensitive")
-    cargo_description: str | None = Field(
-        default=None, max_length=500, description="Free text; used only for fields not sent explicitly"
+    description: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Free text: fills fields not sent explicitly, and is matched against every eligible "
+        "carrier's description by Jev (a conflict removes the carrier)",
     )
 
 
@@ -50,6 +61,7 @@ class RankedCarrierOut(BaseModel):
     carrier: str
     total_cost: Decimal
     hq_distance_miles: Decimal | None
+    requested: bool = Field(description="The order description asks for this carrier")
 
 
 class RejectionOut(BaseModel):
@@ -70,6 +82,7 @@ class QuoteResponse(BaseModel):
     carrier: str | None
     total_cost: Decimal | None
     currency: Literal["USD"] = "USD"
+    requested_carrier: str | None = Field(description="Carrier the order description asks for (Jev), if any")
     distance: DistanceOut | None
     order: OrderOut
     ranking: list[RankedCarrierOut]
@@ -85,6 +98,7 @@ class QuoteResponse(BaseModel):
             status=quote.status,
             carrier=quote.selected.carrier.name if quote.selected else None,
             total_cost=quote.selected.total_cost if quote.selected else None,
+            requested_carrier=quote.requested,
             distance=DistanceOut(miles=d.miles, source=d.source.value, approximate=d.approximate) if d else None,
             order=OrderOut(
                 origin=o.origin,
@@ -94,7 +108,12 @@ class QuoteResponse(BaseModel):
                 inferred=o.inferred,
             ),
             ranking=[
-                RankedCarrierOut(carrier=c.carrier.name, total_cost=c.total_cost, hq_distance_miles=c.hq_distance)
+                RankedCarrierOut(
+                    carrier=c.carrier.name,
+                    total_cost=c.total_cost,
+                    hq_distance_miles=c.hq_distance,
+                    requested=c.requested,
+                )
                 for c in quote.ranking
             ],
             rejected=[RejectionOut(carrier=r.carrier_name, reasons=list(r.reasons)) for r in quote.rejected],

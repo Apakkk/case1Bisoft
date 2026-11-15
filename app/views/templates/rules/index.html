@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Kurallar · Taşıyıcı Seçimi{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Kurallar</h2>
+  <p>Zorunlu kısıtlar her zaman önce uygulanır; onları geçen firmalar aşağıdaki öncelik sırasına göre sıralanır.
+     Bir kriter yalnızca üstündeki kriterlerin hepsi eşitse devreye girer. Kaydedince <code>config/rules.yaml</code>
+     güncellenir ve sonraki teklifler yeni sırayla yapılır (yeniden başlatma gerekmez).</p>
+</hgroup>
+<p class="muted">Sipariş açıklamasında bir firma istenirse ve tüm kısıtları sağlıyorsa o firma her zaman önce önerilir;
+   bu sıralama diğer firmalar için geçerlidir. İstenen firma uygun değilse gerekçesi yazılır ve sıradaki firma seçilir.</p>
+
+<h4>Sıralama önceliği</h4>
+{% include "rules/_ranking.html" %}
+
+<h4>Diğer kurallar <span class="muted">(salt okunur; <code>config/rules.yaml</code>'dan)</span></h4>
+<table>
+  <tbody>
+    <tr><th>Zorunlu kısıtlar</th><td>{% for f in rules.filters %}<code>{{ f }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    <tr><th>Yük tipleri</th><td>{{ rules.cargo_types | join(", ") }}</td></tr>
+    <tr><th>Konteyner ölçüleri</th><td>{{ rules.container_sizes | join(", ") }} ft</td></tr>
+    <tr><th>Jev güven eşikleri</th><td>otomatik kabul ≥ {{ rules.confidence.auto_accept }} ·
+        manuel onay ≥ {{ rules.confidence.needs_review }} · tehlikeli yük incelemesi ≥ {{ rules.confidence.hazardous_review }}</td></tr>
+  </tbody>
+</table>
+{% endblock %}

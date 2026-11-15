@@ -45,3 +45,38 @@ def test_invalid_yaml_raises_rules_error(tmp_path: Path) -> None:
 def test_missing_file_raises_rules_error(tmp_path: Path) -> None:
     with pytest.raises(RulesError, match="not found"):
         FileRulesRepository(tmp_path / "nope.yaml").get()
+
+
+SHIPPED_BLOCK = "ranking:\n  - total_cost\n  - hq_proximity\n  - name\n"
+
+
+def test_save_ranking_rewrites_only_the_ranking_block(tmp_path: Path) -> None:
+    path = tmp_path / "rules.yaml"
+    write(path, SHIPPED, 1_000_000_000)
+    repo = FileRulesRepository(path)
+
+    saved = repo.save_ranking(["hq_proximity", "total_cost"])
+
+    new_block = "ranking:\n  - hq_proximity\n  - total_cost\n  - name\n"
+    assert path.read_text() == SHIPPED.replace(SHIPPED_BLOCK, new_block)  # comments and other sections intact
+    assert saved.ranking == repo.get().ranking == ("hq_proximity", "total_cost", "name")
+    assert not (tmp_path / ".rules.yaml.tmp").exists()
+
+
+def test_invalid_ranking_is_rejected_and_the_file_is_untouched(tmp_path: Path) -> None:
+    path = tmp_path / "rules.yaml"
+    write(path, SHIPPED, 1_000_000_000)
+
+    with pytest.raises(RulesError, match="unknown ranking criterion 'cheapest'"):
+        FileRulesRepository(path).save_ranking(["cheapest"])
+
+    assert path.read_text() == SHIPPED
+
+
+def test_flow_style_ranking_is_rewritten_too(tmp_path: Path) -> None:
+    path = tmp_path / "rules.yaml"
+    write(path, SHIPPED.replace(SHIPPED_BLOCK, "ranking: [total_cost, name]\n"), 1_000_000_000)
+
+    FileRulesRepository(path).save_ranking(["hq_proximity"])
+
+    assert "ranking:\n  - hq_proximity\n  - name\n" in path.read_text()

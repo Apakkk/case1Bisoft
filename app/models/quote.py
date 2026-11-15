@@ -13,7 +13,7 @@ class QuoteStatus(StrEnum):
 class JevCall:
     """One answer from Jev, kept in the response so every model influence is visible."""
 
-    step: str  # cargo_type | hazardous | note_check | note_precheck
+    step: str  # cargo_type | container_size | compatibility
     subject: str  # what was asked about (e.g. carrier name)
     answer: str  # chosen label or "yes"/"no"
     confidence: float  # choice confidence, or P(yes) for yes/no questions

@@ -25,10 +25,17 @@ def test_free_text_cargo_is_classified(jev: JevClient) -> None:
     assert result.cargo_type.choice == "Reefer"
 
 
-def test_restrictive_note_blocks_and_neutral_note_allows(jev: JevClient) -> None:
-    notes = {"M-Logistics": "Şu an tehlikeli yük kabul etmiyoruz.", "X-Logistics": "Nationwide network, 24/7 dispatch."}
+def test_order_and_carrier_descriptions_are_matched(jev: JevClient) -> None:
+    carriers = {
+        "S-Logistics": "Tampa-based short-haul specialist for dry cargo in Florida.",  # excluded by the order note
+        "M-Logistics": "Şu an Orlando'ya teslimat yapmıyoruz.",  # its own note rules the order out
+        "X-Logistics": "Nationwide network, 24/7 dispatch.",  # no conflict
+    }
 
-    result = jev.notes_block_order(Order("Tampa", "Orlando", 20, "Hazardous"), notes)
+    result = jev.check_compatibility(
+        Order("Miami", "Orlando", 40, "Dry"), "S-Logistics ile çalışmak istemiyorum.", carriers
+    )
 
-    assert result.block_probability["M-Logistics"] >= 0.85
-    assert result.block_probability["X-Logistics"] <= 0.15
+    assert result.conflict_probability["S-Logistics"] >= 0.85
+    assert result.conflict_probability["M-Logistics"] >= 0.85
+    assert result.conflict_probability["X-Logistics"] <= 0.15

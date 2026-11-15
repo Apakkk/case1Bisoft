@@ -143,6 +143,17 @@ def test_quote_form_shows_the_decision(screen: Screen) -> None:
     assert "Bu siparişte Jev çağrılmadı" in html
 
 
+def test_quote_form_sends_the_order_description_to_the_compatibility_check(screen: Screen) -> None:
+    screen.jev.blocks = {"S-Logistics": 0.97}
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": "40", "cargo_type": "Dry"}
+
+    html = screen.client.post("/admin/quote", data={**order, "description": "S-Logistics olmasın"}).text
+
+    assert screen.jev.order_notes == ["S-Logistics olmasın"]
+    assert "M-Logistics" in html and "$235.00" in html
+    assert "Sipariş açıklamasıyla uyumsuz" in html and "compatibility" in html
+
+
 def test_quote_form_reports_unknown_cities(screen: Screen) -> None:
     order = {"origin": "Atlantis", "destination": "Miami", "container_size": "20", "cargo_type": "Dry"}
 

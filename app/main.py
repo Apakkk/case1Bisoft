@@ -14,6 +14,7 @@ from app.controllers import (
     health_controller,
     quote_admin_controller,
     quote_controller,
+    rules_admin_controller,
 )
 from app.db import create_pool
 from app.dependencies import build_services
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(carrier_api_controller.router)
     app.include_router(carrier_admin_controller.router)
     app.include_router(quote_admin_controller.router)
+    app.include_router(rules_admin_controller.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

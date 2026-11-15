@@ -31,7 +31,7 @@
         <thead><tr><th>#</th><th>Firma</th><th>Toplam</th><th>Merkez → çıkış</th></tr></thead>
         <tbody>
         {% for r in q.ranking %}
-          <tr><td>{{ loop.index }}</td><td>{{ r.carrier }}</td><td>{{ r.total_cost | money }}</td>
+          <tr><td>{{ loop.index }}</td><td>{{ r.carrier }}{% if r.requested %} <span class="badge info">istenen</span>{% endif %}</td><td>{{ r.total_cost | money }}</td>
               <td>{% if r.hq_distance_miles is not none %}{{ r.hq_distance_miles | miles }} mil{% else %}—{% endif %}</td></tr>
         {% endfor %}
         </tbody>
@@ -55,7 +55,7 @@
         </tbody>
       </table>
     {% else %}
-      <p class="muted">Bu siparişte Jev çağrılmadı: girdi yapılandırılmıştı ve firma notları kısıt içermiyordu.</p>
+      <p class="muted">Bu siparişte Jev çağrılmadı: sipariş açıklaması yoktu ve firma notları kısıt içermiyordu.</p>
     {% endif %}
 
     <details>

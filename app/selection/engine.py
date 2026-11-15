@@ -7,7 +7,7 @@ from decimal import Decimal
 from app.models.carrier import Carrier
 from app.models.order import Order
 from app.selection.constraints import CONSTRAINTS
-from app.selection.criteria import CRITERIA, SortKey
+from app.selection.criteria import CRITERIA, REQUESTED, REQUESTED_KEY, SortKey
 from app.selection.formatting import fmt_miles
 from app.selection.money import total_cost
 from app.selection.rules import RuleSet
@@ -34,6 +34,10 @@ def needs_hq_distance(rules: RuleSet) -> bool:
     return "hq_proximity" in rules.ranking
 
 
+def with_requested(candidates: Iterable[Candidate], name: str | None) -> tuple[Candidate, ...]:
+    return tuple(replace(c, requested=c.carrier.name == name) for c in candidates)
+
+
 def with_hq_distances(
     candidates: Iterable[Candidate], distances: Mapping[str, Decimal | None]
 ) -> tuple[Candidate, ...]:
@@ -42,11 +46,12 @@ def with_hq_distances(
 
 
 def sort_key(candidate: Candidate, rules: RuleSet) -> tuple[SortKey, ...]:
-    return tuple(CRITERIA[name].key(candidate) for name in rules.ranking)
+    return (REQUESTED.key(candidate), *(CRITERIA[name].key(candidate) for name in rules.ranking))
 
 
 def rank(candidates: Iterable[Candidate], rules: RuleSet) -> tuple[Candidate, ...]:
-    """Lexicographic: later criteria only break exact ties of earlier ones."""
+    """A requested carrier first (always), then the rules lexicographically: later criteria only break
+    exact ties of earlier ones."""
     return tuple(sorted(candidates, key=lambda c: sort_key(c, rules)))
 
 
@@ -65,6 +70,8 @@ def boundary_warnings(carriers: Iterable[Carrier], approx_miles: Decimal, ratio:
 
 def deciding_criterion(first: Candidate, second: Candidate, rules: RuleSet) -> str | None:
     """The first criterion in priority order that separates two candidates (None = identical)."""
+    if REQUESTED.key(first) != REQUESTED.key(second):
+        return REQUESTED_KEY
     for name in rules.ranking:
         key = CRITERIA[name].key
         if key(first) != key(second):

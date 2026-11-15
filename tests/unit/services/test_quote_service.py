@@ -21,9 +21,7 @@ def service(carriers: tuple[Carrier, ...] = CASE_CARRIERS, rules: RuleSet | None
 def request(
     origin: str, destination: str, size: int | None, cargo: str | None, text: str | None = None
 ) -> QuoteRequest:
-    return QuoteRequest(
-        origin=origin, destination=destination, container_size=size, cargo_type=cargo, cargo_description=text
-    )
+    return QuoteRequest(origin=origin, destination=destination, container_size=size, cargo_type=cargo, description=text)
 
 
 @pytest.mark.parametrize("case", CASE_ORDERS, ids=lambda c: f"order-{c.id}")

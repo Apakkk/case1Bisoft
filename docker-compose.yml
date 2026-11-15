@@ -29,8 +29,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Live demo: edit config/rules.yaml on the host; the app re-reads it on the next request.
-      - ./config:/app/config:ro
+      # Live demo: edit config/rules.yaml on the host or on /admin/rules (which writes the ranking
+      # back to this file); the app re-reads it on the next request.
+      - ./config:/app/config
     depends_on:
       db:
         condition: service_healthy

@@ -7,8 +7,13 @@ filters:
   - cargo_type
 
 # Ranking criteria in priority order (lexicographic): a criterion only matters when all criteria
-# above it are exactly equal. "Put price second" = swap the first two lines.
+# above it are exactly equal. Editable on the admin rules page (/admin/rules) or here.
+#   total_cost   - lowest total price
+#   hq_proximity - carrier HQ closest to the order origin
+# "Put price second" = move total_cost below hq_proximity.
 # `name` is always appended as the final tie-breaker so results are deterministic.
+# Not a rule: a carrier the order description asks for always comes first if it passes every
+# constraint; these criteria order the others.
 ranking:
   - total_cost
   - hq_proximity

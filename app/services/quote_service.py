@@ -1,22 +1,29 @@
-"""Quote flow: resolve order -> distance -> filter -> HQ distances -> rank -> note gate -> status -> explanation.
+"""Quote flow: resolve order -> distance -> filter -> HQ distances -> rank -> compatibility -> status -> explanation.
 
-Business rules live in app/selection (pure). Jev is consulted only where the *data* is ambiguous:
-free-text cargo descriptions and free-text carrier notes. Low confidence never becomes a guess:
-it becomes `needs_review` or `needs_input`.
+Business rules live in app/selection (pure). Jev is consulted only where the *data* is free text:
+the order's description (missing fields, requirements) and the carriers' descriptions. Low confidence
+never becomes a guess: it becomes `needs_review` or `needs_input`.
 """
 
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from app.clients.distance.chain import DistanceProvider, DistanceResult, UnknownLocationError
-from app.clients.jev_client import ChoiceResult, JevClient, JevUnavailableError
+from app.clients.jev_client import NO_REQUEST, ChoiceResult, CompatibilityCheck, JevClient, JevUnavailableError
 from app.models.carrier import Carrier, NoteStatus
 from app.models.order import Order
 from app.models.quote import JevCall, QuoteStatus, ResolvedOrder
 from app.repositories.carrier_repository import CarrierRepository
 from app.repositories.rules_repository import RulesSource
 from app.schemas.quote import QuoteRequest
-from app.selection.engine import boundary_warnings, filter_carriers, needs_hq_distance, rank, with_hq_distances
+from app.selection.engine import (
+    boundary_warnings,
+    filter_carriers,
+    needs_hq_distance,
+    rank,
+    with_hq_distances,
+    with_requested,
+)
 from app.selection.explanation import Outcome, explain
 from app.selection.order_text import parse_container_size
 from app.selection.rules import RuleSet
@@ -41,6 +48,7 @@ class Quote:
     jev_calls: tuple[JevCall, ...]
     warnings: tuple[str, ...]
     explanation: str
+    requested: str | None = None  # carrier the order description asks for (Jev), if any
 
 
 @dataclass
@@ -72,6 +80,7 @@ class QuoteService:
     def quote(self, request: QuoteRequest) -> Quote:
         rules = self._rules.get()
         trace = _Trace()
+        order_note = (request.description or "").strip()
         resolved = self._resolve_order(request, rules, trace)
         if resolved.container_size is None or resolved.cargo_type is None:
             return self._needs_input(resolved, trace)
@@ -88,7 +97,13 @@ class QuoteService:
         if len(candidates) > 1 and needs_hq_distance(rules):  # a single candidate needs no tie-break
             hq = {c.carrier.name: self._hq_distance(c.carrier, order.origin, rules, trace) for c in candidates}
             candidates = with_hq_distances(candidates, hq)
-        ranked, note_rejections = self._note_gate(order, rank(candidates, rules), rules, trace)
+        notes = _notes_to_check(order_note, candidates)
+        check = self._ask_compatibility(order, order_note, notes, carriers, rules, trace)
+        requested = self._requested(check, order_note, rules, trace)
+        candidates = with_requested(candidates, requested)
+        ranked, note_rejections = self._apply_compatibility(
+            rank(candidates, rules), check, order_note, notes, rules, trace
+        )
 
         if distance.approximate:
             for warning in boundary_warnings(carriers, distance.miles, rules.distance.boundary_warning_ratio):
@@ -101,7 +116,7 @@ class QuoteService:
             status = QuoteStatus.NEEDS_REVIEW if trace.review else QuoteStatus.SELECTED
 
         rejected = (*filtered.rejected, *note_rejections)
-        outcome = Outcome(order, distance.miles, distance.approximate, ranked, rejected, selected)
+        outcome = Outcome(order, distance.miles, distance.approximate, ranked, rejected, selected, requested)
         return Quote(
             status=status,
             order=resolved,
@@ -112,14 +127,15 @@ class QuoteService:
             jev_calls=tuple(trace.jev_calls),
             warnings=tuple(trace.warnings),
             explanation=explain(outcome, rules),
+            requested=requested,
         )
 
     # --- order interpretation -------------------------------------------------------------
 
     def _resolve_order(self, request: QuoteRequest, rules: RuleSet, trace: _Trace) -> ResolvedOrder:
-        text = (request.cargo_description or "").strip()
+        text = (request.description or "").strip()
         if (request.container_size is None or request.cargo_type is None) and not text:
-            raise InvalidOrderError("send container_size and cargo_type, or describe the cargo in cargo_description")
+            raise InvalidOrderError("send container_size and cargo_type, or describe the cargo in description")
 
         inferred: dict[str, str] = {}
         size = request.container_size
@@ -220,28 +236,72 @@ class QuoteService:
             explanation=f"Firma seçilmedi: {' ve '.join(missing)} belirlenemedi. Lütfen açıkça belirtin.",
         )
 
-    # --- carrier notes -------------------------------------------------------------------
+    # --- order note <-> carrier descriptions -------------------------------------------------
 
-    def _note_gate(
-        self, order: Order, ranked: tuple[Candidate, ...], rules: RuleSet, trace: _Trace
-    ) -> tuple[tuple[Candidate, ...], tuple[Rejection, ...]]:
-        """Notes can only narrow: a note Jev is sure about removes the carrier; an unsure one needs review."""
-        notes = {
-            c.carrier.name: c.carrier.description
-            for c in ranked
-            if c.carrier.note_status is not NoteStatus.NONE and c.carrier.description
-        }
+    def _ask_compatibility(
+        self,
+        order: Order,
+        order_note: str,
+        notes: dict[str, str],
+        carriers: list[Carrier],
+        rules: RuleSet,
+        trace: _Trace,
+    ) -> CompatibilityCheck | None:
+        """One Jev request: conflicts for the eligible carriers and, with an order note, the requested carrier."""
         if not notes:
-            return ranked, ()
+            return None
+        what = "sipariş açıklaması ve firma notları" if order_note else "firma notları"
         if self._jev is None:
-            trace.flag(f"Firma notları kontrol edilemedi (Jev yapılandırılmamış): {', '.join(notes)}.")
-            return ranked, ()
+            trace.flag(f"{what.capitalize()} kontrol edilemedi (Jev yapılandırılmamış): {', '.join(notes)}.")
+            return None
+        # Every carrier name, not only eligible ones: a requested but ineligible carrier is named with its reasons.
+        requestable = [c.name for c in carriers] if order_note else []
         try:
-            check = self._jev.notes_block_order(order, notes)
+            return self._jev.check_compatibility(order, order_note, notes, requestable)
         except JevUnavailableError:
-            trace.flag(f"Jev'e ulaşılamadı; firma notları kontrol edilmedi: {', '.join(notes)}.")
-            return ranked, ()
+            trace.flag(f"Jev'e ulaşılamadı; {what} kontrol edilmedi: {', '.join(notes)}.")
+            return None
 
+    def _requested(
+        self, check: CompatibilityCheck | None, order_note: str, rules: RuleSet, trace: _Trace
+    ) -> str | None:
+        """The carrier the order note asks for, through the same confidence bands as every Jev answer."""
+        if check is None or check.requested is None:
+            return None
+        choice, bands = check.requested, rules.confidence
+        trace.jev_calls.append(
+            JevCall(
+                "requested_carrier", _short(order_note), choice.choice, round(choice.confidence, 3), check.elapsed_ms
+            )
+        )
+        if choice.choice == NO_REQUEST:
+            return None
+        if choice.confidence >= bands.auto_accept:
+            return choice.choice
+        if choice.confidence >= bands.needs_review:
+            trace.flag(
+                f"İstenen firma Jev ile düşük güvenle belirlendi ({choice.choice}, güven {choice.confidence:.2f}); "
+                "manuel onay gerekli."
+            )
+            return choice.choice
+        trace.warnings.append(
+            f"Sipariş açıklamasında istenen firma belirlenemedi ({choice.choice}?, güven {choice.confidence:.2f}); "
+            "öncelik sırası uygulandı."
+        )
+        return None
+
+    def _apply_compatibility(
+        self,
+        ranked: tuple[Candidate, ...],
+        check: CompatibilityCheck | None,
+        order_note: str,
+        notes: dict[str, str],
+        rules: RuleSet,
+        trace: _Trace,
+    ) -> tuple[tuple[Candidate, ...], tuple[Rejection, ...]]:
+        """Free text only narrows: a confident conflict removes a carrier; an unsure one on the winner needs review."""
+        if check is None:
+            return ranked, ()
         block_at = rules.confidence.auto_accept
         allow_at = 1 - block_at
         remaining: list[Candidate] = []
@@ -249,26 +309,26 @@ class QuoteService:
         uncertain: dict[str, float] = {}
         for candidate in ranked:
             name = candidate.carrier.name
-            p = check.block_probability.get(name)
+            p = check.conflict_probability.get(name)
             if p is None:
                 remaining.append(candidate)
                 continue
-            answer = "blocks" if p >= 0.5 else "allows"
-            trace.jev_calls.append(JevCall("note_check", name, answer, round(p, 3), check.elapsed_ms))
+            answer = "conflict" if p >= 0.5 else "compatible"
+            trace.jev_calls.append(JevCall("compatibility", name, answer, round(p, 3), check.elapsed_ms))
             if p >= block_at:
-                reason = f'Firma notu bu siparişi engelliyor: "{_short(notes[name])}" (Jev, olasılık {p:.2f})'
-                rejections.append(Rejection(name, (reason,)))
+                rejections.append(Rejection(name, (_conflict_reason(order_note, notes[name], p),)))
                 continue
             if p > allow_at:
                 uncertain[name] = p
             remaining.append(candidate)
 
         if remaining and remaining[0].carrier.name in uncertain:
-            top = remaining[0].carrier.name
-            trace.flag(
-                f"{top} notunun bu siparişe etkisi belirsiz (engelleme olasılığı {uncertain[top]:.2f}); "
-                "manuel onay gerekli."
-            )
+            top, p = remaining[0].carrier.name, uncertain[remaining[0].carrier.name]
+            if order_note:
+                message = f"{top} ile sipariş açıklamasının uyumu belirsiz (uyumsuzluk olasılığı {p:.2f})"
+            else:
+                message = f"{top} notunun bu siparişe etkisi belirsiz (engelleme olasılığı {p:.2f})"
+            trace.flag(f"{message}; manuel onay gerekli.")
         return tuple(remaining), tuple(rejections)
 
     def _hq_distance(self, carrier: Carrier, origin: str, rules: RuleSet, trace: _Trace) -> Decimal | None:
@@ -281,6 +341,27 @@ class QuoteService:
                 f"{carrier.name} merkezi ({carrier.hq_city}) bulunamadı; yakınlık kriterinde sona alındı."
             )
             return None
+
+
+def _notes_to_check(order_note: str, candidates: tuple[Candidate, ...]) -> dict[str, str]:
+    """With an order note every eligible carrier is compared (the note may name any of them); without one,
+    only descriptions that may restrict orders. Ineligible carriers are never compared: they are already out."""
+    if order_note:
+        return {c.carrier.name: c.carrier.description for c in candidates}
+    return {
+        c.carrier.name: c.carrier.description
+        for c in candidates
+        if c.carrier.note_status is not NoteStatus.NONE and c.carrier.description
+    }
+
+
+def _conflict_reason(order_note: str, description: str, p: float) -> str:
+    """Quote the texts Jev compared, so the operator sees why the carrier was removed."""
+    if not order_note:
+        return f'Firma notu bu siparişi engelliyor: "{_short(description)}" (Jev, olasılık {p:.2f})'
+    if not description:
+        return f'Sipariş açıklamasıyla uyumsuz: "{_short(order_note)}" (Jev, olasılık {p:.2f})'
+    return f'Açıklamalar uyumsuz: sipariş "{_short(order_note)}", firma "{_short(description)}" (Jev, olasılık {p:.2f})'
 
 
 def _short(text: str, limit: int = 80) -> str:

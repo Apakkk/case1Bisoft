@@ -11,6 +11,7 @@ class Candidate:
     carrier: Carrier
     total_cost: Decimal
     hq_distance: Decimal | None = None  # HQ -> order origin; None = unknown or not needed
+    requested: bool = False  # the order description asks for this carrier (Jev)
 
 
 @dataclass(frozen=True, slots=True)

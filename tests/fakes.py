@@ -10,10 +10,11 @@ from app.clients.distance.cities import Coordinates, load_city_directory
 from app.clients.distance.ors import RoutingError
 from app.clients.distance.static_table import load_static_table
 from app.clients.jev_client import (
+    NO_REQUEST,
     ChoiceResult,
+    CompatibilityCheck,
     JevUnavailableError,
     NotePrecheck,
-    NotesCheck,
     OrderClassification,
 )
 from app.models.carrier import Carrier
@@ -129,13 +130,17 @@ class FakeJev:
         cargo: ChoiceResult | None = None,
         size: ChoiceResult | None = None,
         blocks: dict[str, float] | None = None,
+        requested: ChoiceResult | None = None,
         restriction: float = 0.0,
         fail: bool = False,
     ) -> None:
         self.cargo, self.size, self.blocks = cargo, size, blocks or {}
+        self.requested = requested or ChoiceResult(NO_REQUEST, 0.97, {NO_REQUEST: 0.97})
+        self.requestable: list[list[str]] = []  # carrier names offered per compatibility request
         self.restriction, self.fail = restriction, fail
         self.calls: list[str] = []
-        self.notes_asked: list[dict[str, str]] = []
+        self.notes_asked: list[dict[str, str]] = []  # carrier descriptions per compatibility request
+        self.order_notes: list[str] = []  # order note per compatibility request
 
     def classify_order(
         self, text: str, cargo_types: Sequence[str] | None, container_sizes: Sequence[int] | None
@@ -143,10 +148,15 @@ class FakeJev:
         self._record("classify_order")
         return OrderClassification(self.cargo if cargo_types else None, self.size if container_sizes else None, 7)
 
-    def notes_block_order(self, order: Order, notes: Mapping[str, str]) -> NotesCheck:
-        self._record("notes_block_order")
-        self.notes_asked.append(dict(notes))
-        return NotesCheck({name: self.blocks.get(name, 0.0) for name in notes}, 9)
+    def check_compatibility(
+        self, order: Order, order_note: str, carrier_notes: Mapping[str, str], requestable: Sequence[str] = ()
+    ) -> CompatibilityCheck:
+        self._record("check_compatibility")
+        self.notes_asked.append(dict(carrier_notes))
+        self.order_notes.append(order_note)
+        self.requestable.append(list(requestable))
+        conflicts = {name: self.blocks.get(name, 0.0) for name in carrier_notes}
+        return CompatibilityCheck(conflicts, 9, self.requested if order_note and requestable else None)
 
     def note_has_restriction(self, note: str) -> NotePrecheck:
         self._record("note_has_restriction")

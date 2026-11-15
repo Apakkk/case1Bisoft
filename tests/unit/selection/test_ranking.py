@@ -3,8 +3,12 @@
 from dataclasses import replace
 from decimal import Decimal
 
+import pytest
+
 from app.models.carrier import Carrier
 from app.models.order import Order
+from app.selection.engine import rank, with_requested
+from app.selection.rules import RulesError
 from tests.case_data import CASE_CARRIERS, M_LOGISTICS, case_distance, decide, default_rules
 
 D = Decimal
@@ -86,3 +90,26 @@ def test_hq_distances_are_skipped_when_proximity_is_not_ranked() -> None:
     decide(Order("Miami", "Orlando", 40, "Dry"), rules=default_rules(ranking=["total_cost"]), hq_distance=spy)
 
     assert calls == []
+
+
+def test_requested_carrier_comes_before_a_cheaper_one() -> None:
+    eligible = decide(MIAMI_ORLANDO_40_DRY).ranked  # S-Logistics $94, M-Logistics $235
+
+    ranked = rank(with_requested(eligible, "M-Logistics"), default_rules())
+
+    assert [c.carrier.name for c in ranked] == ["M-Logistics", "S-Logistics"]
+
+
+def test_requested_carrier_comes_first_whatever_the_rules_order_the_others() -> None:
+    rules = default_rules(ranking=["hq_proximity", "total_cost"])
+    eligible = decide(MIAMI_ORLANDO_40_DRY, rules=rules, hq_distance=hq_distance_with_tampa).ranked
+    assert [c.carrier.name for c in eligible] == ["S-Logistics", "M-Logistics"]  # Tampa is closer than Houston
+
+    ranked = rank(with_requested(eligible, "M-Logistics"), rules)
+
+    assert [c.carrier.name for c in ranked] == ["M-Logistics", "S-Logistics"]
+
+
+def test_requested_is_not_a_configurable_rule() -> None:
+    with pytest.raises(RulesError, match="unknown ranking criterion 'requested'"):
+        default_rules(ranking=["requested", "total_cost"])

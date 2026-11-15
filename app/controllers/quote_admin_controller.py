@@ -11,6 +11,7 @@ from app.dependencies import get_quote_service, get_rules
 from app.schemas.quote import QuoteRequest, QuoteResponse
 from app.selection.rules import RuleSet
 from app.services.quote_service import InvalidOrderError, QuoteService
+from app.services.rules_service import criterion_option
 from app.views import templates
 
 router = APIRouter(prefix="/admin", include_in_schema=False)
@@ -18,7 +19,8 @@ router = APIRouter(prefix="/admin", include_in_schema=False)
 
 @router.get("/quote", response_class=HTMLResponse)
 def quote_page(request: Request, rules: Annotated[RuleSet, Depends(get_rules)]) -> Response:
-    return templates.TemplateResponse(request, "quote/index.html", {"catalog": rules})
+    ranking = [criterion_option(name).label for name in rules.ranking]
+    return templates.TemplateResponse(request, "quote/index.html", {"catalog": rules, "ranking": ranking})
 
 
 @router.post("/quote", response_class=HTMLResponse)
@@ -29,7 +31,7 @@ def run_quote(
     destination: Annotated[str, Form()] = "",
     container_size: Annotated[str, Form()] = "",
     cargo_type: Annotated[str, Form()] = "",
-    cargo_description: Annotated[str, Form()] = "",
+    description: Annotated[str, Form()] = "",
 ) -> Response:
     try:
         order = QuoteRequest.model_validate(
@@ -38,7 +40,7 @@ def run_quote(
                 "destination": destination,
                 "container_size": container_size or None,
                 "cargo_type": cargo_type or None,
-                "cargo_description": cargo_description.strip() or None,
+                "description": description.strip() or None,
             }
         )
         quote = QuoteResponse.from_quote(service.quote(order))

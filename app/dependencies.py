@@ -14,17 +14,18 @@ from app.config import Settings
 from app.db import Pool
 from app.repositories.carrier_repository import PostgresCarrierRepository
 from app.repositories.distance_cache_repository import PostgresDistanceCache
-from app.repositories.rules_repository import FileRulesRepository, RulesSource
+from app.repositories.rules_repository import FileRulesRepository, RulesStore
 from app.selection.rules import RuleSet
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
+from app.services.rules_service import RulesService
 
 
 @dataclass(frozen=True, slots=True)
 class Services:
     quotes: QuoteService
     carriers: CarrierService
-    rules: RulesSource
+    rules: RulesStore
 
 
 def build_distance_provider(config_dir: Path, settings: Settings, pool: Pool | None) -> DistanceProvider:
@@ -73,3 +74,7 @@ def get_carrier_service(request: Request) -> CarrierService:
 
 def get_rules(request: Request) -> RuleSet:
     return get_services(request).rules.get()
+
+
+def get_rules_service(request: Request) -> RulesService:
+    return RulesService(get_services(request).rules)
