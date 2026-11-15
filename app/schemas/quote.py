@@ -81,6 +81,13 @@ class JevCallOut(BaseModel):
     elapsed_ms: int
 
 
+class JevUsageOut(BaseModel):
+    requests: int = Field(description="Jev requests this quote made (0 = decided by deterministic code alone)")
+    input_tokens: int = Field(description="Billable input tokens of those requests")
+    model: str | None = Field(description="The Jev model that answered, as the API reports it")
+    cached: int = Field(description="Of `requests`, answered from memory (same question asked before): no cost")
+
+
 class QuoteResponse(BaseModel):
     status: QuoteStatus
     carrier: str | None
@@ -92,6 +99,7 @@ class QuoteResponse(BaseModel):
     ranking: list[RankedCarrierOut]
     rejected: list[RejectionOut]
     jev_calls: list[JevCallOut]
+    jev_usage: JevUsageOut
     warnings: list[str]
     explanation: str
 
@@ -130,6 +138,12 @@ class QuoteResponse(BaseModel):
                 )
                 for j in quote.jev_calls
             ],
+            jev_usage=JevUsageOut(
+                requests=quote.jev_usage.requests,
+                input_tokens=quote.jev_usage.input_tokens,
+                model=quote.jev_usage.model,
+                cached=quote.jev_usage.cached,
+            ),
             warnings=list(quote.warnings),
             explanation=quote.explanation,
         )

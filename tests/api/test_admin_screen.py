@@ -1,13 +1,14 @@
 """Admin screen (Jinja2 + HTMX) over TestClient with fakes: pages render, forms validate, saves refresh rows."""
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.dependencies import get_carrier_service, get_quote_service, get_rules
 from app.main import create_app
+from app.models.carrier import NoteStatus
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, default_rules
@@ -30,6 +31,7 @@ class Screen:
     client: TestClient
     repo: InMemoryCarrierRepository
     jev: FakeJev
+    rules: StaticRules
 
 
 @pytest.fixture
@@ -40,7 +42,7 @@ def screen() -> Iterator[Screen]:
     app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, distances, rules, jev)
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, distances, rules, jev)
     app.dependency_overrides[get_rules] = lambda: rules.get()
-    yield Screen(TestClient(app), repo, jev)
+    yield Screen(TestClient(app), repo, jev, rules)
 
 
 def test_list_page_shows_every_carrier(screen: Screen) -> None:
@@ -186,3 +188,17 @@ def test_an_unknown_hq_city_is_a_turkish_field_error_with_a_suggestion(screen: S
 
     assert "Tamap" in html and "Bunu mu demek istediniz: Tampa, FL?" in html
     assert screen.jev.calls == []
+
+
+def test_the_badge_follows_todays_threshold(screen: Screen) -> None:
+    saved_as_harmless = replace(
+        screen.repo.list()[0], description="Genelde hafta içi.", note_status=NoteStatus.NONE, note_confidence=0.12
+    )
+    assert saved_as_harmless.id is not None
+    screen.repo.update(saved_as_harmless.id, saved_as_harmless)
+
+    assert "Kısıt içeriyor · 0.12" not in screen.client.get("/admin/carriers").text
+
+    screen.rules.rules = default_rules(confidence={"auto_accept": 0.90, "needs_review": 0.60, "hazardous_review": 0.15})
+
+    assert "Kısıt içeriyor · 0.12" in screen.client.get("/admin/carriers").text

@@ -5,18 +5,35 @@ order's free text and a carrier's free-text description are compatible. Prices, 
 explanations never go through it. Questions are batched into one request because every request has a fixed token cost.
 """
 
+import logging
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from typesafe_sdk import Choice, Noul, NoulCriteria, RetryPolicy, SystemOneResponse, TypeSafeClient, TypeSafeError
 
+from app.clients.jev_cache import JevAnswerCache, question_key
 from app.models.order import Order
+
+logger = logging.getLogger(__name__)
+
+# After a failure Jev is not asked for this long: during an outage every request would otherwise wait for the
+# timeout and one retry (~10 s with the settings below) before degrading to review.
+OUTAGE_PAUSE_SECONDS = 30.0
 
 
 class JevUnavailableError(Exception):
     """Jev could not answer (network, timeout, auth, quota). Callers degrade to human review."""
+
+
+@dataclass(frozen=True, slots=True)
+class RequestMeta:
+    """What one Jev request cost and which model answered it (None when the API did not say)."""
+
+    input_tokens: int | None = None  # billable; 0 for an answer from the cache
+    model: str | None = None
+    cached: bool = False  # answered from memory, no request sent
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +48,7 @@ class OrderClassification:
     cargo_type: ChoiceResult | None
     container_size: ChoiceResult | None
     elapsed_ms: int
+    meta: RequestMeta = field(default_factory=RequestMeta)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,12 +56,14 @@ class CompatibilityCheck:
     conflict_probability: Mapping[str, float]  # carrier name -> P(the order and the carrier do not fit)
     elapsed_ms: int
     requested: ChoiceResult | None = None  # which carrier the order note asks for (NO_REQUEST = none)
+    meta: RequestMeta = field(default_factory=RequestMeta)
 
 
 @dataclass(frozen=True, slots=True)
 class NotePrecheck:
     restriction_probability: float  # P(the note restricts which orders the carrier accepts)
     elapsed_ms: int
+    meta: RequestMeta = field(default_factory=RequestMeta)
 
 
 class JevClient(Protocol):
@@ -78,9 +98,30 @@ NOTE_RESTRICTS = (
 )
 
 
+class SystemOne(Protocol):
+    """The one SDK call this client makes (TypeSafeClient; a scripted stand-in in tests)."""
+
+    def system_one(self, state: Any, questions: Mapping[str, Any]) -> SystemOneResponse: ...
+
+
 class TypesafeJevClient:
-    def __init__(self, api_key: str, model: str | None, timeout: float) -> None:
-        self._client = TypeSafeClient(api_key=api_key, model=model, timeout=timeout, retry=RetryPolicy(max_retries=1))
+    def __init__(
+        self,
+        api_key: str,
+        model: str | None,
+        timeout: float,
+        *,
+        client: SystemOne | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        cache: JevAnswerCache | None = None,
+    ) -> None:
+        self._client: SystemOne = client or TypeSafeClient(
+            api_key=api_key, model=model, timeout=timeout, retry=RetryPolicy(max_retries=1)
+        )
+        self._model = model
+        self._clock = clock
+        self._cache = cache
+        self._paused_until = 0.0  # set after a failure; until then requests fail at once
 
     def classify_order(
         self, text: str, cargo_types: Sequence[str] | None, container_sizes: Sequence[int] | None
@@ -96,11 +137,12 @@ class TypesafeJevClient:
                 instructions="Container length in feet stated in the text",
                 criteria={str(s): None for s in container_sizes},
             )
-        result, elapsed = self._ask(text, questions)
+        result, elapsed, meta = self._ask("classify_order", text, questions)
         return OrderClassification(
             cargo_type=_choice(result, "cargo_type"),
             container_size=_choice(result, "container_size"),
             elapsed_ms=elapsed,
+            meta=meta,
         )
 
     def check_compatibility(
@@ -133,21 +175,40 @@ class TypesafeJevClient:
             labels: dict[str, str | None] = {name: None for name in requestable}
             labels[NO_REQUEST] = "The note asks for no specific carrier"
             questions["requested"] = Choice(instructions=REQUESTED, criteria=labels)
-        result, elapsed = self._ask(state, questions)
+        result, elapsed, meta = self._ask("check_compatibility", state, questions)
         conflicts = {name: result.nouls[f"c{i}"].noul for i, name in enumerate(names)}
-        return CompatibilityCheck(conflicts, elapsed, _choice(result, "requested"))
+        return CompatibilityCheck(conflicts, elapsed, _choice(result, "requested"), meta)
 
     def note_has_restriction(self, note: str) -> NotePrecheck:
-        result, elapsed = self._ask(note, {"restricts": Noul(instructions=NOTE_RESTRICTS)})
-        return NotePrecheck(result.nouls["restricts"].noul, elapsed)
+        result, elapsed, meta = self._ask(
+            "note_has_restriction", note, {"restricts": Noul(instructions=NOTE_RESTRICTS)}
+        )
+        return NotePrecheck(result.nouls["restricts"].noul, elapsed, meta)
 
-    def _ask(self, state: Any, questions: Mapping[str, Any]) -> tuple[SystemOneResponse, int]:
+    def _ask(self, what: str, state: Any, questions: Mapping[str, Any]) -> tuple[SystemOneResponse, int, RequestMeta]:
+        """The single way to Jev: memory first (even while paused), then the pause, then one request."""
+        key = question_key(self._model, state, questions) if self._cache is not None else None
+        if self._cache is not None and key is not None:
+            remembered = self._cache.get(key)
+            if remembered is not None:
+                logger.info("jev %s: answered from the cache, model %s", what, remembered.model)
+                return remembered, 0, RequestMeta(0, remembered.model, cached=True)
+        wait = self._paused_until - self._clock()
+        if wait > 0:
+            raise JevUnavailableError(f"not asked for another {wait:.0f} s after a recent failure")
         started = time.perf_counter()
         try:
             result = self._client.system_one(state=state, questions=questions)
         except TypeSafeError as error:
+            self._paused_until = self._clock() + OUTAGE_PAUSE_SECONDS
+            logger.warning("jev %s failed (%s); not asked again for %.0f s", what, error, OUTAGE_PAUSE_SECONDS)
             raise JevUnavailableError(str(error)) from error
-        return result, int((time.perf_counter() - started) * 1000)
+        elapsed = int((time.perf_counter() - started) * 1000)
+        if self._cache is not None and key is not None:
+            self._cache.put(key, result)
+        meta = RequestMeta(result.usage.input_tokens, result.model)
+        logger.info("jev %s: %s input tokens, model %s, %d ms", what, meta.input_tokens, meta.model, elapsed)
+        return result, elapsed, meta
 
 
 def _choice(result: SystemOneResponse, name: str) -> ChoiceResult | None:

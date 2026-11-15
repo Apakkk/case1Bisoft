@@ -14,10 +14,11 @@
     <td>{{ c.rate_per_mile | rate }}</td>
     <td>
       {% if c.description %}<span class="muted">{{ c.description }}</span><br>{% endif %}
-      {% if c.description and c.note_status == "constraint" %}
-        <span class="badge warn" title="Jev: kısıt olasılığı">Kısıt içeriyor{% if c.note_confidence is not none %} · {{ "%.2f" | format(c.note_confidence) }}{% endif %}</span>
-      {% elif c.description and c.note_status == "unchecked" %}
+      {#- The same rule as the quotes: the saved probability against today's threshold. #}
+      {% if c.description and c.note_status == "unchecked" %}
         <span class="badge bad">Kontrol edilmedi</span>
+      {% elif c.note_may_restrict(auto_accept) %}
+        <span class="badge warn" title="Jev: kısıt olasılığı">Kısıt içeriyor{% if c.note_confidence is not none %} · {{ "%.2f" | format(c.note_confidence) }}{% endif %}</span>
       {% elif c.description %}
         <span class="badge ok">Kısıt yok</span>
       {% endif %}

@@ -4,7 +4,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 from app.models.carrier import Carrier, NoteStatus
-from app.models.quote import QuoteStatus
+from app.models.quote import JevUsage, QuoteStatus
 from app.schemas.quote import QuoteRequest
 from app.services.quote_service import QuoteService
 from tests.case_data import B_LOGISTICS, CASE_CARRIERS, M_LOGISTICS, S_LOGISTICS, default_rules
@@ -358,3 +358,64 @@ def test_structured_order_without_description_never_asks_for_a_requested_carrier
     service(jev, carriers).quote(miami_atlanta(container_size=20, cargo_type="Reefer"))
 
     assert jev.requestable == [[]]
+
+
+# --- what a quote cost at Jev ---------------------------------------------------------------
+
+
+def test_usage_counts_requests_tokens_and_the_answering_model() -> None:
+    jev = FakeJev(cargo=choice("Reefer", 0.97), tokens=300, model="jev-1.14.0")
+
+    quote = service(jev).quote(miami_atlanta(description="20'lik konteynerde donmuş karides"))
+
+    assert jev.calls == ["classify_order", "check_compatibility"]
+    assert quote.jev_usage == JevUsage(requests=2, input_tokens=600, model="jev-1.14.0")
+
+
+def test_a_quote_decided_by_code_alone_reports_no_usage() -> None:
+    quote = service(FakeJev(tokens=300)).quote(miami_atlanta(container_size=20, cargo_type="Reefer"))
+
+    assert quote.jev_usage == JevUsage()
+
+
+def test_a_failed_request_is_not_counted() -> None:
+    quote = service(FakeJev(fail=True, tokens=300)).quote(
+        miami_atlanta(container_size=20, cargo_type="Reefer", description="hafta sonu teslim")
+    )
+
+    assert quote.status is QuoteStatus.NEEDS_REVIEW
+    assert quote.jev_usage == JevUsage()
+
+
+# --- carrier notes judged against today's threshold --------------------------------------------
+
+
+def test_a_stricter_threshold_sends_a_note_saved_as_harmless_back_to_jev() -> None:
+    # Saved as harmless at P(restricts) = 0.12 when the cut-off was 0.15; with auto_accept 0.90 it is 0.10.
+    note = replace(
+        B_LOGISTICS, description="Hafta sonu teslimat yok.", note_status=NoteStatus.NONE, note_confidence=0.12
+    )
+    carriers = (S_LOGISTICS, note, M_LOGISTICS)
+    strict = default_rules(confidence={"auto_accept": 0.90, "needs_review": 0.60, "hazardous_review": 0.15})
+
+    for rules, expected in ((default_rules(), []), (strict, ["check_compatibility"])):
+        jev = FakeJev()
+        QuoteService(InMemoryCarrierRepository(carriers), offline_distances(), StaticRules(rules), jev).quote(
+            miami_atlanta(container_size=20, cargo_type="Reefer")
+        )
+        assert jev.calls == expected
+
+
+def test_a_looser_threshold_stops_asking_about_a_note_saved_as_restrictive() -> None:
+    # Saved as restrictive at P = 0.18 (cut-off 0.15); with auto_accept 0.80 the cut-off is 0.20.
+    note = replace(
+        B_LOGISTICS, description="Genelde hafta içi.", note_status=NoteStatus.CONSTRAINT, note_confidence=0.18
+    )
+    loose = default_rules(confidence={"auto_accept": 0.80, "needs_review": 0.60, "hazardous_review": 0.15})
+    jev = FakeJev()
+
+    QuoteService(
+        InMemoryCarrierRepository((S_LOGISTICS, note, M_LOGISTICS)), offline_distances(), StaticRules(loose), jev
+    ).quote(miami_atlanta(container_size=20, cargo_type="Reefer"))
+
+    assert jev.calls == []

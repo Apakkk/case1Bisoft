@@ -44,7 +44,8 @@
       <ul>{% for r in q.rejected %}<li><strong>{{ r.carrier }}</strong>: {{ r.reasons | join("; ") }}</li>{% endfor %}</ul>
     {% endif %}
 
-    <h6>Jev çağrıları</h6>
+    <h6>Jev çağrıları{% if q.jev_usage.requests %} <span class="muted">· {{ q.jev_usage.requests }} istek{% if q.jev_usage.cached %} ({{ q.jev_usage.cached }} tanesi önbellekten){% endif %},
+      {{ q.jev_usage.input_tokens }} giriş token'ı{% if q.jev_usage.model %}, model {{ q.jev_usage.model }}{% endif %}</span>{% endif %}</h6>
     {% if q.jev_calls %}
       <table>
         <thead><tr><th>Adım</th><th>Konu</th><th>Cevap</th><th>Güven / olasılık</th><th>ms</th></tr></thead>

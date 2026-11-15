@@ -122,7 +122,7 @@ produce text or numbers. Every answer it gives is returned in `jev_calls`.
 | Order interpretation | Which catalog cargo type / container size does this text describe? (`Choice`) | Only when the field is missing and the regex did not find it |
 | Compatibility | Do this order (with its description) and this carrier's description conflict? (`Noul`, one per carrier, batched) | Every eligible carrier when the order has a description; otherwise only carriers whose description may restrict |
 | Requested carrier | Which carrier, if any, does the order description ask for? (`Choice` over every carrier name, in the same request) | When the order has a description |
-| Carrier pre-check | Does this description restrict which orders the carrier accepts? (`Noul`) | Once, when a changed carrier description is saved |
+| Carrier pre-check | Does this description restrict which orders the carrier accepts? (`Noul`) | Once, when a changed carrier description is saved. The probability is stored and compared with the current threshold at every quote, so changing `confidence.auto_accept` applies to old notes too, on the carriers page as well |
 
 | Stays in deterministic code | Why |
 |---|---|
@@ -139,6 +139,19 @@ compared (685 measured for three), so questions are batched: at most one request
 order and one for all candidates. Structured orders without a description, against carriers without
 restrictive descriptions, make **no** Jev call (the seven case orders included).
 
+Every quote reports what it cost in `jev_usage`: requests answered, their billable input tokens (as the
+API reports them; failed requests are not counted), the model that answered and how many answers came
+from memory. The quote page shows the same line above the Jev table, and every Jev request writes one
+INFO log line (`make logs`).
+
+A question Jev has already answered is not paid for again (`app/clients/jev_cache.py`). The key is
+everything the request sends: the order fields and note, the eligible carriers' descriptions, the
+carrier names and the questions themselves, so changing any text or prompt makes a new question and an
+answer is never reused for something Jev was not asked. Prices, rules and distances are not part of an
+answer: pressing "Teklif al" twice after a rule change asks Jev once and still shows the new ranking.
+Answers live in the process's memory (up to 1,000, least recently used out first), for 24 hours and only
+while the model that gave them is the one that answered last, because `JEV_MODEL` is not pinned.
+
 ## Low confidence
 
 Thresholds live in `config/rules.yaml` (`confidence`). They are starting values, to be tuned on a
@@ -153,7 +166,7 @@ labeled sample for the pinned model version.
 | Compatibility: P(conflict) ≥ 0.85 | Carrier removed; the texts Jev compared are quoted as the reason |
 | Compatibility: 0.15 < P(conflict) < 0.85 on the winner | Winner kept, status `needs_review` |
 | Requested carrier: confidence ≥ 0.85 / 0.60–0.85 / < 0.60 | Used / used with `needs_review` / ignored with a warning (price order applies) |
-| Jev unavailable (timeout, auth, quota) or not configured | Missing fields → `needs_input`; an order description or restrictive carrier descriptions → `needs_review`. The ranking is kept and nothing is silently skipped |
+| Jev unavailable (timeout, auth, quota) or not configured | Missing fields → `needs_input`; an order description or restrictive carrier descriptions → `needs_review`. The ranking is kept and nothing is silently skipped. After a failure Jev is not asked for 30 s, so an outage costs one timeout (~10 s with the one retry), not one per quote |
 | Approximate distance within 10% of the limit of a carrier that passes every other constraint | `needs_review`: the real road distance could change eligibility. A carrier that is out anyway (wrong size or cargo type) does not trigger it |
 
 ## Distance
@@ -298,6 +311,7 @@ curl -s localhost:8000/api/v1/quotes -H 'content-type: application/json' \
     {"carrier": "A-Logistics", "reasons": ["Mesafe 660 mil, üst sınır 200 mil", "20 ft konteyner taşımıyor (taşıdığı: 45 ft)", "Reefer yük taşımıyor (taşıdığı: Dry, Hazardous)"]}
   ],
   "jev_calls": [],
+  "jev_usage": {"requests": 0, "input_tokens": 0, "model": null, "cached": 0},
   "warnings": [],
   "explanation": "Rota Miami → Atlanta: 660 mil; 20 ft, Reefer. B-Logistics seçildi: toplam $660.00 (660 mil × $1.00/mil). Toplam ücret eşit; belirleyici kriter: merkezin çıkış noktasına uzaklığı — B-Logistics: 30 mil (Fort Lauderdale), M-Logistics: 1190 mil (Houston). Elenenler: ..."
 }
@@ -312,12 +326,13 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | `tests/unit/selection` | The 7 case orders, inclusive limits (200/250/300), tie-breaks, ranking swap via config, rules validation, explanations | – | – | – |
 | `tests/unit/distance` | Every case-table pair without a request, city resolution and "did you mean", table reload, suggestion ranking, the US city list and its build script, ORS client (httpx MockTransport) | – | – | – |
 | `tests/unit/services` | Confidence bands, hazardous asymmetry, order/carrier compatibility, Jev outage, batching, city suggestion quota guards | – | – | fake |
+| `tests/unit/clients` | The Jev client with a scripted SDK: token count and model, outage pause, the answer cache and its key | – | – | scripted |
 | `tests/api` | REST endpoints and the admin screen over TestClient | fake | – | fake |
 | `tests/integration` | PostgreSQL repositories, CHECK constraints, the real app wiring | ✓ | – | – |
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 326 tests, no database/network/Jev, ~2 s
+make test        # 352 tests, no database/network/Jev, ~2 s
 make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API
@@ -380,14 +395,20 @@ cargo types, $0.30 per mile) and order 2 goes to it on price ($70.50), but to S-
 with `specialist` first. A criterion on the rate per mile would never change anything: every
 carrier drives the same miles, so it orders exactly like the total price.
 
-**Add a criterion that needs a new carrier attribute** (e.g. a rating, higher is better):
+**Add a criterion that needs a new carrier attribute** (e.g. a rating, higher is better). Rehearsed
+end to end against PostgreSQL; in this order:
 
-1. `db/migrations/002_add_rating.sql`:
+1. `db/migrations/002_add_rating.sql`, then `make migrate` (keeps the data; never `make reset-db`
+   during a demo). Migrate before changing the code: the queries name the column.
    `ALTER TABLE carriers ADD COLUMN IF NOT EXISTS rating NUMERIC(2,1) NOT NULL DEFAULT 3.0;`
-   then `make migrate` (keeps the data; never `make reset-db` during a demo).
-2. Add `rating` to `Carrier`, the repository's column list, `CarrierIn`/`CarrierOut` and the form.
-3. Criterion with a negated key: `key=lambda c: (-c.carrier.rating,)`.
-4. Add `rating` to `ranking` in `rules.yaml`.
+2. `Carrier` (`app/models/carrier.py`): the field, with its default.
+3. `CarrierIn` and `CarrierOut` (`app/schemas/carrier.py`).
+4. `app/repositories/carrier_repository.py`: `_COLUMNS`, `_VALUES`, the INSERT and UPDATE column
+   lists, `_params`, `_to_carrier`.
+5. `CarrierService._build`: pass the field on to `Carrier(...)`; without it the value is dropped.
+6. `app/views/forms.py` and the templates in `app/views/templates/carriers/` (input, column).
+7. Criterion with a negated key: `key=lambda c: (-c.carrier.rating,)`.
+8. Add it on `/admin/rules` (or to `ranking` in `rules.yaml`), after the code is running.
 
 **Add a hard constraint**: a function returning a Turkish reason or `None`, registered in
 `CONSTRAINTS` (`app/selection/constraints.py`), and its name under `filters`.
@@ -436,4 +457,6 @@ carrier drives the same miles, so it orders exactly like the total price.
 - ORS's locality layer includes census-designated places, so a town found online may be a community
   next to a city (Boca West next to Boca Raton). They are real places with coordinates.
 - The distance cache never expires (road distances rarely change).
+- The Jev answer cache is in memory: a restart empties it, and several app processes would not share it
+  (the app runs as one process). Texts are compared exactly, so a change of case is a new question.
 - The admin screen has no authentication.

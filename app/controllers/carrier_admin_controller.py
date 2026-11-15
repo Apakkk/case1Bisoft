@@ -27,8 +27,9 @@ def admin_home() -> RedirectResponse:
 
 
 @router.get("/carriers", response_class=HTMLResponse)
-def carriers_page(request: Request, service: Service) -> Response:
-    return templates.TemplateResponse(request, "carriers/index.html", {"carriers": service.list(), "oob": False})
+def carriers_page(request: Request, service: Service, rules: Rules) -> Response:
+    context = {"carriers": service.list(), "oob": False, "auto_accept": rules.confidence.auto_accept}
+    return templates.TemplateResponse(request, "carriers/index.html", context)
 
 
 @router.get("/carriers/new", response_class=HTMLResponse)
@@ -76,7 +77,13 @@ def _save(
         return _form(request, rules, form, carrier_id, {"name": "Bu isimde bir firma zaten var."})
     except InvalidCarrierError as error:
         return _form(request, rules, form, carrier_id, {"_": str(error)})
-    context = {"message": _saved_message(carrier), "carriers": service.list(), "oob": True}
+    auto_accept = rules.confidence.auto_accept
+    context = {
+        "message": _saved_message(carrier, auto_accept),
+        "carriers": service.list(),
+        "oob": True,
+        "auto_accept": auto_accept,
+    }
     return templates.TemplateResponse(request, "carriers/_saved.html", context)
 
 
@@ -92,14 +99,14 @@ def _form(
     return templates.TemplateResponse(request, "carriers/_form.html", context)
 
 
-def _saved_message(carrier: Carrier) -> str:
+def _saved_message(carrier: Carrier, auto_accept: float) -> str:
     message = f"{carrier.name} kaydedildi."
-    if carrier.description and carrier.note_status is NoteStatus.CONSTRAINT:
+    if carrier.description and carrier.note_status is NoteStatus.UNCHECKED:
+        message += " Jev'e ulaşılamadı; açıklama siparişlerde kontrol edilecek."
+    elif carrier.note_may_restrict(auto_accept):
         message += (
             f" Jev: açıklama kısıt içeriyor (olasılık {carrier.note_confidence:.2f}); siparişlerde kontrol edilecek."
         )
-    elif carrier.description and carrier.note_status is NoteStatus.UNCHECKED:
-        message += " Jev'e ulaşılamadı; açıklama siparişlerde kontrol edilecek."
     elif carrier.description:
         message += " Jev: açıklama kısıt içermiyor."
     return message

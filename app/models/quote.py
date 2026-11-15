@@ -21,6 +21,16 @@ class JevCall:
 
 
 @dataclass(frozen=True, slots=True)
+class JevUsage:
+    """What a quote cost at Jev: questions answered (some from memory), billable input tokens, the model."""
+
+    requests: int = 0
+    input_tokens: int = 0
+    model: str | None = None
+    cached: int = 0  # of `requests`, answered from memory at no cost
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedOrder:
     """The order after normalization; fields may still be None when they could not be resolved."""
 

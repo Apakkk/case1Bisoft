@@ -5,13 +5,22 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from app.clients.jev_cache import JevAnswerCache
+from app.clients.jev_client import TypesafeJevClient
 from app.dependencies import get_carrier_service, get_quote_service
 from app.main import create_app
 from app.selection.rules import RulesError
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, CASE_ORDERS, CaseOrder, default_rules
-from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, offline_distances
+from tests.fakes import (
+    FakeJev,
+    InMemoryCarrierRepository,
+    ScriptedSystemOne,
+    StaticRules,
+    jev_response,
+    offline_distances,
+)
 
 
 @pytest.fixture
@@ -48,6 +57,7 @@ def test_response_shape_for_the_tie_case(client: TestClient) -> None:
     data = client.post("/api/v1/quotes", json=body).json()
 
     assert data["currency"] == "USD"
+    assert data["jev_usage"] == {"requests": 0, "input_tokens": 0, "model": None, "cached": 0}
     assert data["distance"] == {"miles": "660", "source": "case_table", "approximate": False}
     assert data["ranking"] == [
         {
@@ -161,3 +171,37 @@ def test_invalid_rules_file_is_reported_not_hidden() -> None:
     assert response.status_code == 500
     assert response.json()["error"] == "INVALID_RULES"
     assert "ratng" in response.json()["detail"]
+
+
+def test_pressing_twice_asks_jev_once_and_a_changed_description_asks_again() -> None:
+    """The real Jev client with a scripted SDK behind it: the cache sits where it does in production."""
+    sdk = ScriptedSystemOne(
+        jev_response(
+            {
+                "c0": {"type": "noul", "noul": 0.02},
+                "c1": {"type": "noul", "noul": 0.03},
+                "requested": {
+                    "type": "choice",
+                    "choice": "no_specific_carrier",
+                    "confidence": 0.97,
+                    "probabilities": {"no_specific_carrier": 0.97},
+                },
+            }
+        )
+    )
+    jev = TypesafeJevClient("test-key", None, 5.0, client=sdk, cache=JevAnswerCache())
+    app = create_app()
+    repo, distances, rules = InMemoryCarrierRepository(CASE_CARRIERS), offline_distances(), StaticRules(default_rules())
+    app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, distances, rules, jev)
+    client = TestClient(app)
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
+
+    first = client.post("/api/v1/quotes", json={**order, "description": "hafta sonu teslim"}).json()
+    second = client.post("/api/v1/quotes", json={**order, "description": "hafta sonu teslim"}).json()
+    changed = client.post("/api/v1/quotes", json={**order, "description": "hafta sonu teslim edilsin"}).json()
+
+    assert first["jev_usage"] == {"requests": 1, "input_tokens": 312, "model": "jev-1.14.0", "cached": 0}
+    assert second["jev_usage"] == {"requests": 1, "input_tokens": 0, "model": "jev-1.14.0", "cached": 1}
+    assert changed["jev_usage"]["cached"] == 0
+    assert len(sdk.requests) == 2
+    assert first["carrier"] == second["carrier"] == "S-Logistics"

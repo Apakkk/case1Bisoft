@@ -5,6 +5,9 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
+
+from typesafe_sdk import SystemOneResponse
 
 from app.clients.distance.chain import DistanceProvider
 from app.clients.distance.cities import CityDirectory, Coordinates, city_key, match_tier
@@ -17,6 +20,7 @@ from app.clients.jev_client import (
     JevUnavailableError,
     NotePrecheck,
     OrderClassification,
+    RequestMeta,
 )
 from app.dependencies import load_distance_config
 from app.models.carrier import Carrier
@@ -191,11 +195,15 @@ class FakeJev:
         requested: ChoiceResult | None = None,
         restriction: float = 0.0,
         fail: bool = False,
+        tokens: int | None = None,
+        model: str | None = None,
+        cached: bool = False,
     ) -> None:
         self.cargo, self.size, self.blocks = cargo, size, blocks or {}
         self.requested = requested or ChoiceResult(NO_REQUEST, 0.97, {NO_REQUEST: 0.97})
         self.requestable: list[list[str]] = []  # carrier names offered per compatibility request
         self.restriction, self.fail = restriction, fail
+        self.meta = RequestMeta(tokens, model, cached)  # what every answer reports
         self.calls: list[str] = []
         self.notes_asked: list[dict[str, str]] = []  # carrier descriptions per compatibility request
         self.order_notes: list[str] = []  # order note per compatibility request
@@ -204,7 +212,9 @@ class FakeJev:
         self, text: str, cargo_types: Sequence[str] | None, container_sizes: Sequence[int] | None
     ) -> OrderClassification:
         self._record("classify_order")
-        return OrderClassification(self.cargo if cargo_types else None, self.size if container_sizes else None, 7)
+        return OrderClassification(
+            self.cargo if cargo_types else None, self.size if container_sizes else None, 7, self.meta
+        )
 
     def check_compatibility(
         self, order: Order, order_note: str, carrier_notes: Mapping[str, str], requestable: Sequence[str] = ()
@@ -214,13 +224,34 @@ class FakeJev:
         self.order_notes.append(order_note)
         self.requestable.append(list(requestable))
         conflicts = {name: self.blocks.get(name, 0.0) for name in carrier_notes}
-        return CompatibilityCheck(conflicts, 9, self.requested if order_note and requestable else None)
+        return CompatibilityCheck(conflicts, 9, self.requested if order_note and requestable else None, self.meta)
 
     def note_has_restriction(self, note: str) -> NotePrecheck:
         self._record("note_has_restriction")
-        return NotePrecheck(self.restriction, 5)
+        return NotePrecheck(self.restriction, 5, self.meta)
 
     def _record(self, method: str) -> None:
         self.calls.append(method)
         if self.fail:
             raise JevUnavailableError("simulated outage")
+
+
+def jev_response(answers: dict[str, Any], tokens: int | None = 312, model: str = "jev-1.14.0") -> SystemOneResponse:
+    return SystemOneResponse.model_validate(
+        {"model": model, "usage": {"input_tokens": tokens, "output_tokens": 4}, "answers": answers}
+    )
+
+
+class ScriptedSystemOne:
+    """Stands in for TypeSafeClient: the scripted answer (or error) for every request; records each request."""
+
+    def __init__(self, answer: SystemOneResponse | None = None, error: Exception | None = None) -> None:
+        self.answer, self.error = answer, error
+        self.requests: list[tuple[Any, dict[str, Any]]] = []
+
+    def system_one(self, state: Any, questions: Mapping[str, Any]) -> SystemOneResponse:
+        self.requests.append((state, dict(questions)))
+        if self.error is not None:
+            raise self.error
+        assert self.answer is not None
+        return self.answer

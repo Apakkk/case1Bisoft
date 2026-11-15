@@ -1,5 +1,6 @@
 """FastAPI application factory and lifespan (database pool + service wiring)."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -36,7 +37,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool.close()
 
 
+def _show_app_logs() -> None:
+    """Print the app's INFO lines (one per Jev request, table reloads) beside uvicorn's; WARNING and up already show."""
+    app_logger = logging.getLogger("app")
+    if not app_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+        app_logger.addHandler(handler)
+        app_logger.setLevel(logging.INFO)
+
+
 def create_app() -> FastAPI:
+    _show_app_logs()
     app = FastAPI(
         title="Carrier Selection API",
         version="0.1.0",

@@ -24,3 +24,16 @@ class Carrier:
     note_status: NoteStatus = NoteStatus.NONE
     note_confidence: float | None = None
     id: int | None = None
+
+    def note_may_restrict(self, auto_accept: float) -> bool:
+        """Whether the description may restrict orders, judged against today's threshold (rules.yaml).
+
+        The probability Jev gave when the note was saved is compared with the current cut-off, so a changed
+        threshold applies to old notes too. The stored status decides only when there is no probability: seeded as
+        harmless, or never checked because Jev was unavailable.
+        """
+        if not self.description:
+            return False
+        if self.note_confidence is None:
+            return self.note_status is not NoteStatus.NONE
+        return self.note_confidence > 1 - auto_accept

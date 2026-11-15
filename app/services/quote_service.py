@@ -10,10 +10,17 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from app.clients.distance.chain import DistanceProvider, DistanceResult, UnknownLocationError
-from app.clients.jev_client import NO_REQUEST, ChoiceResult, CompatibilityCheck, JevClient, JevUnavailableError
-from app.models.carrier import Carrier, NoteStatus
+from app.clients.jev_client import (
+    NO_REQUEST,
+    ChoiceResult,
+    CompatibilityCheck,
+    JevClient,
+    JevUnavailableError,
+    RequestMeta,
+)
+from app.models.carrier import Carrier
 from app.models.order import Order
-from app.models.quote import JevCall, QuoteStatus, ResolvedOrder
+from app.models.quote import JevCall, JevUsage, QuoteStatus, ResolvedOrder
 from app.repositories.carrier_repository import CarrierRepository
 from app.repositories.rules_repository import RulesSource
 from app.schemas.quote import QuoteRequest
@@ -52,6 +59,7 @@ class Quote:
     explanation: str
     requested: str | None = None  # carrier the order description asks for (Jev), if any
     hq_distances: Mapping[str, DistanceResult] = field(default_factory=dict)  # carrier -> HQ to origin
+    jev_usage: JevUsage = field(default_factory=JevUsage)
 
 
 @dataclass
@@ -61,10 +69,18 @@ class _Trace:
     jev_calls: list[JevCall] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     review: bool = False
+    usage: JevUsage = field(default_factory=JevUsage)
 
     def flag(self, warning: str) -> None:
         self.warnings.append(warning)
         self.review = True
+
+    def spent(self, meta: RequestMeta) -> None:
+        """Count one answered Jev request (failed requests return no token count and are not counted)."""
+        u = self.usage
+        self.usage = JevUsage(
+            u.requests + 1, u.input_tokens + (meta.input_tokens or 0), meta.model or u.model, u.cached + meta.cached
+        )
 
 
 class QuoteService:
@@ -107,7 +123,7 @@ class QuoteService:
                     hq_distances[c.carrier.name] = hq_result
             hq = {c.carrier.name: _miles_of(hq_distances.get(c.carrier.name)) for c in candidates}
             candidates = with_hq_distances(candidates, hq)
-        notes = _notes_to_check(order_note, candidates)
+        notes = _notes_to_check(order_note, candidates, rules)
         check = self._ask_compatibility(order, order_note, notes, carriers, rules, trace)
         requested = self._requested(check, order_note, rules, trace)
         candidates = with_requested(candidates, requested)
@@ -140,6 +156,7 @@ class QuoteService:
             explanation=explain(outcome, rules),
             requested=requested,
             hq_distances=hq_distances,
+            jev_usage=trace.usage,
         )
 
     # --- order interpretation -------------------------------------------------------------
@@ -204,6 +221,7 @@ class QuoteService:
         except JevUnavailableError:
             trace.warnings.append("Jev'e ulaşılamadı; serbest metin yorumlanamadı.")
             return None, None
+        trace.spent(result.meta)
 
         cargo = self._accept("cargo_type", result.cargo_type, result.elapsed_ms, text, rules, trace)
         size_label = self._accept("container_size", result.container_size, result.elapsed_ms, text, rules, trace)
@@ -251,6 +269,7 @@ class QuoteService:
             jev_calls=tuple(trace.jev_calls),
             warnings=tuple(trace.warnings),
             explanation=f"Firma seçilmedi: {' ve '.join(missing)} belirlenemedi. Lütfen açıkça belirtin.",
+            jev_usage=trace.usage,
         )
 
     # --- order note <-> carrier descriptions -------------------------------------------------
@@ -274,10 +293,12 @@ class QuoteService:
         # Every carrier name, not only eligible ones: a requested but ineligible carrier is named with its reasons.
         requestable = [c.name for c in carriers] if order_note else []
         try:
-            return self._jev.check_compatibility(order, order_note, notes, requestable)
+            check = self._jev.check_compatibility(order, order_note, notes, requestable)
         except JevUnavailableError:
             trace.flag(f"Jev'e ulaşılamadı; {what} kontrol edilmedi: {', '.join(notes)}.")
             return None
+        trace.spent(check.meta)
+        return check
 
     def _requested(
         self, check: CompatibilityCheck | None, order_note: str, rules: RuleSet, trace: _Trace
@@ -369,16 +390,14 @@ def _miles_of(result: DistanceResult | None) -> Decimal | None:
     return result.miles if result is not None else None
 
 
-def _notes_to_check(order_note: str, candidates: tuple[Candidate, ...]) -> dict[str, str]:
+def _notes_to_check(order_note: str, candidates: tuple[Candidate, ...], rules: RuleSet) -> dict[str, str]:
     """With an order note every eligible carrier is compared (the note may name any of them); without one,
-    only descriptions that may restrict orders. Ineligible carriers are never compared: they are already out."""
+    only descriptions that may restrict orders under today's threshold. Ineligible carriers are never compared:
+    they are already out."""
     if order_note:
         return {c.carrier.name: c.carrier.description for c in candidates}
-    return {
-        c.carrier.name: c.carrier.description
-        for c in candidates
-        if c.carrier.note_status is not NoteStatus.NONE and c.carrier.description
-    }
+    auto_accept = rules.confidence.auto_accept
+    return {c.carrier.name: c.carrier.description for c in candidates if c.carrier.note_may_restrict(auto_accept)}
 
 
 def _conflict_reason(order_note: str, description: str, p: float) -> str:

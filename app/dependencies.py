@@ -9,6 +9,7 @@ from app.clients.distance.chain import DistanceProvider
 from app.clients.distance.cities import CityDirectory, load_city_directory
 from app.clients.distance.ors import OrsClient
 from app.clients.distance.static_table import FileDistanceTable, load_static_table
+from app.clients.jev_cache import JevAnswerCache
 from app.clients.jev_client import JevClient, TypesafeJevClient
 from app.config import Settings
 from app.db import Pool
@@ -56,6 +57,7 @@ def build_jev_client(settings: Settings) -> JevClient | None:
         api_key=settings.typesafe_api_key.get_secret_value(),
         model=settings.jev_model,
         timeout=settings.jev_timeout_seconds,
+        cache=JevAnswerCache(),  # one per app: quotes and carrier saves share it
     )
 
 
