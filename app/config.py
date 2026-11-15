@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://carrier:carrier@localhost:5433/carrier"
 
     typesafe_api_key: SecretStr | None = None
-    jev_model: str | None = None
+    jev_model: str | None = "jev-1.14.0"  # the confidence thresholds were measured on this version
     jev_timeout_seconds: float = 5.0
 
     ors_api_key: SecretStr | None = None

@@ -12,7 +12,7 @@ from app.models.carrier import NoteStatus
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, default_rules
-from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, offline_distances
+from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, choice, offline_distances
 
 VALID = {
     "name": "K-Logistics",
@@ -221,3 +221,35 @@ def test_the_badge_follows_todays_threshold(screen: Screen) -> None:
     screen.rules.rules = default_rules(confidence={"auto_accept": 0.90, "needs_review": 0.60, "hazardous_review": 0.15})
 
     assert "Kısıt içeriyor · 0.12" in screen.client.get("/admin/carriers").text
+
+
+def test_a_contradicting_description_shows_a_confirmation_checkbox_that_resends_the_form(screen: Screen) -> None:
+    screen.jev.cargo = choice("Hazardous", 0.93, Dry=0.07, Hazardous=0.93)
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": "40", "cargo_type": "Dry"}
+
+    asked = screen.client.post("/admin/quote", data={**order, "description": "lityum pil"}).text
+    confirmed = screen.client.post(
+        "/admin/quote", data={**order, "description": "lityum pil", "confirm_mismatch": "true"}
+    ).text
+
+    assert "Onay gerekli" in asked
+    assert "Girilen yük tipi ile açıklama uyumsuz. Bu şekilde devam etmek istiyor musunuz?" in asked
+    assert 'name="confirm_mismatch" value="true" required' in asked
+    assert 'hx-include="#quote-form"' in asked  # the checkbox resends the order as typed
+    assert "Manuel onay gerekli" in confirmed and "S-Logistics" in confirmed
+    assert "kullanıcı onayıyla girilen değerle devam edildi" in confirmed
+    assert 'name="confirm_mismatch"' not in confirmed
+
+
+def test_the_quote_form_has_the_id_the_confirmation_resends(screen: Screen) -> None:
+    assert '<form id="quote-form"' in screen.client.get("/admin/quote").text
+
+
+def test_without_jev_the_result_does_not_claim_there_was_no_description(screen: Screen) -> None:
+    screen.jev.fail = True
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": "40", "cargo_type": "Dry"}
+
+    html = screen.client.post("/admin/quote", data={**order, "description": "hafta sonu teslim"}).text
+
+    assert "Jev'e soru sorulamadı; sebebi uyarılarda." in html
+    assert "sipariş açıklaması yoktu" not in html

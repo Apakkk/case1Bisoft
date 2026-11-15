@@ -18,6 +18,7 @@ from tests.fakes import (
     InMemoryCarrierRepository,
     ScriptedSystemOne,
     StaticRules,
+    choice,
     jev_response,
     offline_distances,
 )
@@ -186,6 +187,12 @@ def test_pressing_twice_asks_jev_once_and_a_changed_description_asks_again() -> 
                     "confidence": 0.97,
                     "probabilities": {"no_specific_carrier": 0.97},
                 },
+                "cargo_type": {
+                    "type": "choice",
+                    "choice": "not_stated",
+                    "confidence": 0.95,
+                    "probabilities": {"not_stated": 0.95, "Dry": 0.05},
+                },
             }
         )
     )
@@ -200,8 +207,32 @@ def test_pressing_twice_asks_jev_once_and_a_changed_description_asks_again() -> 
     second = client.post("/api/v1/quotes", json={**order, "description": "hafta sonu teslim"}).json()
     changed = client.post("/api/v1/quotes", json={**order, "description": "hafta sonu teslim edilsin"}).json()
 
-    assert first["jev_usage"] == {"requests": 1, "input_tokens": 312, "model": "jev-1.14.0", "cached": 0}
-    assert second["jev_usage"] == {"requests": 1, "input_tokens": 0, "model": "jev-1.14.0", "cached": 1}
+    # Two questions per quote: does the text contradict the entered cargo type, and does it fit each carrier.
+    assert first["jev_usage"] == {"requests": 2, "input_tokens": 624, "model": "jev-1.14.0", "cached": 0}
+    assert second["jev_usage"] == {"requests": 2, "input_tokens": 0, "model": "jev-1.14.0", "cached": 2}
     assert changed["jev_usage"]["cached"] == 0
-    assert len(sdk.requests) == 2
+    assert len(sdk.requests) == 4
     assert first["carrier"] == second["carrier"] == "S-Logistics"
+
+
+def test_a_contradicting_description_answers_needs_confirmation_and_a_confirmed_resend_goes_on() -> None:
+    jev = FakeJev(cargo=choice("Hazardous", 0.93, Dry=0.07, Hazardous=0.93))
+    app = create_app()
+    repo, rules = InMemoryCarrierRepository(CASE_CARRIERS), StaticRules(default_rules())
+    app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), rules, jev)
+    client = TestClient(app)
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
+
+    asked = client.post("/api/v1/quotes", json={**order, "description": "lityum pil"})
+    confirmed = client.post("/api/v1/quotes", json={**order, "description": "lityum pil", "confirm_mismatch": True})
+
+    assert asked.status_code == 200
+    assert (asked.json()["status"], asked.json()["carrier"]) == ("needs_confirmation", None)
+    assert asked.json()["confirmation"] == {
+        "message": "Girilen yük tipi ile açıklama uyumsuz. Bu şekilde devam etmek istiyor musunuz?",
+        "mismatches": [
+            {"field": "cargo_type", "entered": "Dry", "described": "Hazardous", "confidence": 0.93, "source": "jev"}
+        ],
+    }
+    assert (confirmed.json()["status"], confirmed.json()["carrier"]) == ("needs_review", "S-Logistics")
+    assert confirmed.json()["confirmation"] is None

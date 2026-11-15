@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.quote import QuoteStatus
+from app.selection.consistency import confirmation_question
 
 if TYPE_CHECKING:
     from app.clients.distance.chain import DistanceResult
@@ -39,8 +40,14 @@ class QuoteRequest(BaseModel):
     description: str | None = Field(
         default=None,
         max_length=500,
-        description="Free text: fills fields not sent explicitly, and is matched against every eligible "
-        "carrier's description by Jev (a conflict removes the carrier)",
+        description="Free text: fills fields not sent explicitly, is checked against the fields that were sent "
+        "(a contradiction answers `needs_confirmation`), and is matched against every eligible carrier's "
+        "description by Jev (a conflict removes the carrier)",
+    )
+    confirm_mismatch: bool = Field(
+        default=False,
+        description="Go on with the entered fields although the description contradicts them (send it after a "
+        "`needs_confirmation` answer); the mismatch stays in `warnings`",
     )
 
 
@@ -81,6 +88,19 @@ class JevCallOut(BaseModel):
     elapsed_ms: int
 
 
+class MismatchOut(BaseModel):
+    field: str = Field(description="cargo_type | container_size")
+    entered: str
+    described: str = Field(description="What the description says instead")
+    confidence: float | None = Field(description="Jev's confidence; null when the text was parsed (container size)")
+    source: str = Field(description="jev | text")
+
+
+class ConfirmationOut(BaseModel):
+    message: str = Field(description="The question to show the user (Turkish)")
+    mismatches: list[MismatchOut]
+
+
 class JevUsageOut(BaseModel):
     requests: int = Field(description="Jev requests this quote made (0 = decided by deterministic code alone)")
     input_tokens: int = Field(description="Billable input tokens of those requests")
@@ -100,6 +120,9 @@ class QuoteResponse(BaseModel):
     rejected: list[RejectionOut]
     jev_calls: list[JevCallOut]
     jev_usage: JevUsageOut
+    confirmation: ConfirmationOut | None = Field(
+        description="Only with status needs_confirmation: what to confirm before a carrier is chosen"
+    )
     warnings: list[str]
     explanation: str
 
@@ -144,9 +167,24 @@ class QuoteResponse(BaseModel):
                 model=quote.jev_usage.model,
                 cached=quote.jev_usage.cached,
             ),
+            confirmation=_confirmation(quote),
             warnings=list(quote.warnings),
             explanation=quote.explanation,
         )
+
+
+def _confirmation(quote: Quote) -> ConfirmationOut | None:
+    if quote.status is not QuoteStatus.NEEDS_CONFIRMATION:
+        return None
+    return ConfirmationOut(
+        message=confirmation_question(quote.mismatches),
+        mismatches=[
+            MismatchOut(
+                field=m.field, entered=m.entered, described=m.described, confidence=m.confidence, source=m.source
+            )
+            for m in quote.mismatches
+        ],
+    )
 
 
 def _source(result: DistanceResult | None) -> str | None:

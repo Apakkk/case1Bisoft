@@ -6,6 +6,7 @@ from decimal import Decimal
 from app.models.carrier import Carrier, NoteStatus
 from app.models.quote import JevUsage, QuoteStatus
 from app.schemas.quote import QuoteRequest
+from app.selection.consistency import Mismatch
 from app.services.quote_service import QuoteService
 from tests.case_data import B_LOGISTICS, CASE_CARRIERS, M_LOGISTICS, S_LOGISTICS, default_rules
 from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, choice, offline_distances
@@ -237,7 +238,7 @@ def test_order_description_is_compared_with_every_eligible_carrier_in_one_reques
 
     service(jev, carriers).quote(miami_orlando(DONT_USE_S))
 
-    assert jev.calls == ["check_compatibility"]
+    assert jev.calls == ["classify_order", "check_compatibility"]  # the entered cargo type is checked first
     assert jev.order_notes == [DONT_USE_S]
     assert jev.notes_asked == [{"S-Logistics": "Dry cargo in Florida.", "M-Logistics": ""}]  # ineligible ones not
 
@@ -438,3 +439,121 @@ def test_a_looser_threshold_stops_asking_about_a_note_saved_as_restrictive() -> 
     ).quote(miami_atlanta(container_size=20, cargo_type="Reefer"))
 
     assert jev.calls == []
+
+
+# --- an entered field the description contradicts ------------------------------------------------
+
+HAZMAT_TEXT = "lityum pil"
+HAZMAT_READ = choice("Hazardous", 0.93, Dry=0.05, Reefer=0.02, Hazardous=0.93)
+ASK = "Girilen yük tipi ile açıklama uyumsuz. Bu şekilde devam etmek istiyor musunuz?"
+
+
+def dry_40(description: str, **fields: object) -> QuoteRequest:  # order 2's fields: S-Logistics $94, M $235
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
+    return QuoteRequest.model_validate({**order, "description": description, **fields})
+
+
+def test_a_description_contradicting_the_entered_cargo_type_asks_before_choosing() -> None:
+    jev = FakeJev(cargo=HAZMAT_READ)
+
+    quote = service(jev).quote(dry_40(HAZMAT_TEXT))
+
+    assert quote.status is QuoteStatus.NEEDS_CONFIRMATION
+    assert (quote.selected, quote.ranking, quote.distance) == (None, (), None)
+    assert jev.calls == ["classify_order"]  # nothing about carriers is asked before the user answers
+    assert quote.mismatches == (Mismatch("cargo_type", "Dry", "Hazardous", 0.93, "jev"),)
+    assert ASK in quote.explanation
+    assert [(c.step, c.answer) for c in quote.jev_calls] == [("cargo_check", "Hazardous")]
+    assert not any("manuel inceleme" in w for w in quote.warnings)  # the question comes first
+
+
+def test_a_confirmed_hazardous_mismatch_goes_on_with_the_entered_type_but_needs_review() -> None:
+    jev = FakeJev(cargo=HAZMAT_READ)
+
+    quote = service(jev).quote(dry_40(HAZMAT_TEXT, confirm_mismatch=True))
+
+    assert quote.status is QuoteStatus.NEEDS_REVIEW
+    assert quote.order.cargo_type == "Dry"
+    assert quote.selected is not None and quote.selected.carrier.name == "S-Logistics"
+    assert jev.calls == ["classify_order", "check_compatibility"]  # the description still meets the carriers
+    assert (
+        "Yük tipi açıklamayla uyumsuz: girilen Dry, açıklamaya göre Hazardous (Jev, güven 0.93); "
+        "kullanıcı onayıyla girilen değerle devam edildi."
+    ) in quote.warnings
+    assert any("Tehlikeli yük olasılığı 0.93" in w for w in quote.warnings)
+
+
+def test_a_confirmed_mismatch_that_is_not_hazardous_is_selected_with_a_warning() -> None:
+    jev = FakeJev(cargo=choice("Reefer", 0.93, Dry=0.06, Reefer=0.93, Hazardous=0.01))
+
+    quote = service(jev).quote(dry_40("donmuş karides", confirm_mismatch=True))
+
+    assert quote.status is QuoteStatus.SELECTED
+    assert any("kullanıcı onayıyla girilen değerle devam edildi" in w for w in quote.warnings)
+
+
+def test_a_description_that_names_no_cargo_is_no_mismatch() -> None:
+    quote = service(FakeJev()).quote(dry_40("hafta sonu teslim"))  # FakeJev answers not_stated
+
+    assert quote.status is QuoteStatus.SELECTED
+    assert (quote.jev_calls[0].step, quote.jev_calls[0].answer) == ("cargo_check", "not_stated")
+
+
+def test_an_unsure_reading_is_no_mismatch_but_possible_hazardous_cargo_needs_review() -> None:
+    jev = FakeJev(cargo=choice("Reefer", 0.50, Dry=0.30, Reefer=0.50, Hazardous=0.20))
+
+    quote = service(jev).quote(dry_40("karışık yük"))
+
+    assert quote.status is QuoteStatus.NEEDS_REVIEW
+    assert any("Tehlikeli yük olasılığı 0.20" in w for w in quote.warnings)
+
+
+def test_a_jev_outage_during_the_cargo_check_needs_review() -> None:
+    quote = service(FakeJev(fail=True)).quote(dry_40(HAZMAT_TEXT))
+
+    assert quote.status is QuoteStatus.NEEDS_REVIEW
+    assert quote.selected is not None
+    assert "Girilen yük tipi açıklamayla karşılaştırılamadı (Jev'e ulaşılamadı)." in quote.warnings
+
+
+def test_without_jev_the_cargo_check_needs_review() -> None:
+    quote = service(None).quote(dry_40(HAZMAT_TEXT))
+
+    assert quote.status is QuoteStatus.NEEDS_REVIEW
+    assert "Girilen yük tipi açıklamayla karşılaştırılamadı (Jev yapılandırılmamış)." in quote.warnings
+
+
+def test_a_missing_cargo_type_the_text_does_not_state_is_asked_for() -> None:
+    quote = service(FakeJev()).quote(miami_atlanta(container_size=20, description="S-Logistics olmasın"))
+
+    assert quote.status is QuoteStatus.NEEDS_INPUT
+    assert "Açıklamada yük tipi geçmiyor (Jev, güven 0.95); tahmin edilmedi." in quote.warnings
+
+
+def test_a_size_in_the_text_that_contradicts_the_entered_one_is_found_without_jev() -> None:
+    quote = service(None).quote(dry_40("20'lik konteyner"))
+
+    assert quote.status is QuoteStatus.NEEDS_CONFIRMATION
+    assert quote.mismatches == (Mismatch("container_size", "40 ft", "20 ft", None, "text"),)
+    assert quote.explanation == (
+        "Firma seçilmedi. Girilen konteyner ölçüsü ile açıklama uyumsuz. Bu şekilde devam etmek istiyor musunuz? "
+        "Konteyner ölçüsü: girilen 40 ft, açıklamaya göre 20 ft (açıklamadaki ölçü)."
+    )
+
+
+def test_both_contradictions_are_asked_in_one_question() -> None:
+    quote = service(FakeJev(cargo=HAZMAT_READ)).quote(dry_40("20'lik konteynerde lityum pil"))
+
+    assert quote.status is QuoteStatus.NEEDS_CONFIRMATION
+    assert [m.field for m in quote.mismatches] == ["container_size", "cargo_type"]
+    assert "Girilen konteyner ölçüsü ve yük tipi ile açıklama uyumsuz." in quote.explanation
+
+
+def test_a_pinned_model_answered_by_another_version_is_reported_once() -> None:
+    jev = FakeJev(model="jev-1.15.0", requested_model="jev-1.14.0")
+
+    quote = service(jev).quote(dry_40("hafta sonu teslim"))  # two requests
+
+    warning = "Jev modeli jev-1.14.0 istendi ama jev-1.15.0 cevapladı; güven eşikleri jev-1.14.0 ile ölçüldü."
+    assert quote.warnings.count(warning) == 1
+    assert quote.status is QuoteStatus.SELECTED  # a note for the operator, not a reason to review the order

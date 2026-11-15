@@ -3,6 +3,7 @@
   "needs_review": ("warn", "Manuel onay gerekli"),
   "needs_input": ("info", "Bilgi gerekli"),
   "no_carrier": ("bad", "Uygun firma yok"),
+  "needs_confirmation": ("warn", "Onay gerekli"),
 } %}
 <article>
   {% if error %}
@@ -18,6 +19,25 @@
         <span class="muted">· {{ q.distance.miles | miles }} mil ({{ q.distance.source | distance_source }}{% if q.distance.approximate %}, yaklaşık{% endif %})</span>
       {% endif %}
     </header>
+
+    {% if q.confirmation %}
+      <div class="confirmation">
+        <p><strong>{{ q.confirmation.message }}</strong></p>
+        <ul>
+          {% for m in q.confirmation.mismatches %}
+            <li>{{ "Yük tipi" if m.field == "cargo_type" else "Konteyner ölçüsü" }}: girilen <strong>{{ m.entered }}</strong>,
+              açıklamaya göre <strong>{{ m.described }}</strong>
+              <span class="muted">({% if m.confidence is not none %}Jev, güven {{ "%.2f" | format(m.confidence) }}{% else %}açıklamadaki ölçü{% endif %})</span></li>
+          {% endfor %}
+        </ul>
+        <form hx-post="/admin/quote" hx-target="#result" hx-include="#quote-form">
+          <label><input type="checkbox" name="confirm_mismatch" value="true" required>
+            Evet, girilen değerlerle devam et</label>
+          <button type="submit">Devam et</button>
+        </form>
+        <p class="muted">Ya da yukarıdaki alanı veya açıklamayı düzeltip yeniden teklif alın.</p>
+      </div>
+    {% endif %}
 
     <pre class="explanation">{{ q.explanation }}</pre>
 
@@ -57,7 +77,13 @@
         </tbody>
       </table>
     {% else %}
-      <p class="muted">Bu siparişte Jev çağrılmadı: sipariş açıklaması yoktu ve firma notları kısıt içermiyordu.</p>
+      {% set ns = namespace(jev_down=false) %}
+      {% for w in q.warnings %}{% if "Jev" in w %}{% set ns.jev_down = true %}{% endif %}{% endfor %}
+      {% if ns.jev_down %}
+        <p class="muted">Bu siparişte Jev'e soru sorulamadı; sebebi uyarılarda.</p>
+      {% else %}
+        <p class="muted">Bu siparişte Jev çağrılmadı: sipariş açıklaması yoktu ve firma notları kısıt içermiyordu.</p>
+      {% endif %}
     {% endif %}
 
     <details>

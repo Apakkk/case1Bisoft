@@ -15,6 +15,7 @@ from app.clients.distance.ors import RoutingError
 from app.clients.distance.static_table import FileDistanceTable
 from app.clients.jev_client import (
     NO_REQUEST,
+    NOT_STATED,
     ChoiceResult,
     CompatibilityCheck,
     JevUnavailableError,
@@ -198,12 +199,15 @@ class FakeJev:
         tokens: int | None = None,
         model: str | None = None,
         cached: bool = False,
+        requested_model: str | None = None,
     ) -> None:
-        self.cargo, self.size, self.blocks = cargo, size, blocks or {}
+        # Unset cargo answer: the text names no cargo (a note about carriers or dates), as Jev answers `not_stated`.
+        self.cargo = cargo or ChoiceResult(NOT_STATED, 0.95, {NOT_STATED: 0.95})
+        self.size, self.blocks = size, blocks or {}
         self.requested = requested or ChoiceResult(NO_REQUEST, 0.97, {NO_REQUEST: 0.97})
         self.requestable: list[list[str]] = []  # carrier names offered per compatibility request
         self.restriction, self.fail = restriction, fail
-        self.meta = RequestMeta(tokens, model, cached)  # what every answer reports
+        self.meta = RequestMeta(tokens, model, cached, requested_model)  # what every answer reports
         self.calls: list[str] = []
         self.notes_asked: list[dict[str, str]] = []  # carrier descriptions per compatibility request
         self.order_notes: list[str] = []  # order note per compatibility request

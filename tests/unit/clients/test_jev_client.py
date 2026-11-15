@@ -8,6 +8,7 @@ from app.clients.jev_client import OUTAGE_PAUSE_SECONDS, JevUnavailableError, Re
 from tests.fakes import ScriptedSystemOne, jev_response
 
 REEFER = {"type": "choice", "choice": "Reefer", "confidence": 0.97, "probabilities": {"Reefer": 0.97, "Dry": 0.03}}
+HAZMAT = {"type": "choice", "choice": "Hazardous", "confidence": 0.93, "probabilities": {"Hazardous": 0.93}}
 
 
 def client(sdk: ScriptedSystemOne) -> TypesafeJevClient:
@@ -123,3 +124,45 @@ def test_a_remembered_answer_is_used_while_jev_is_paused() -> None:
 
     assert jev.note_has_restriction("Nationwide network.").meta.cached
     assert len(sdk.requests) == 2  # the remembered question needed no request
+
+
+# --- the cargo question and the pinned model -----------------------------------------------------
+
+
+def test_the_cargo_question_lets_jev_say_the_text_names_no_cargo() -> None:
+    sdk = ScriptedSystemOne(jev_response({"cargo_type": REEFER}))
+
+    client(sdk).classify_order("frozen shrimp", ["Dry", "Reefer"], None)
+
+    _, questions = sdk.requests[0]
+    assert list(questions["cargo_type"].criteria) == ["Dry", "Reefer", "not_stated"]
+
+
+def test_asking_the_same_cargo_question_again_costs_nothing() -> None:
+    """The confirmation round trip: the resent order asks Jev exactly what the first one did."""
+    sdk = ScriptedSystemOne(jev_response({"cargo_type": HAZMAT}))
+    jev = TypesafeJevClient("test-key", "jev-1.14.0", 5.0, client=sdk, cache=JevAnswerCache())
+    catalog = ["Dry", "Reefer", "Hazardous"]
+
+    first = jev.classify_order("lityum pil", catalog, None)
+    again = jev.classify_order("lityum pil", catalog, None)
+
+    assert len(sdk.requests) == 1
+    assert first.meta == RequestMeta(312, "jev-1.14.0", requested_model="jev-1.14.0")
+    assert again.meta == RequestMeta(0, "jev-1.14.0", cached=True, requested_model="jev-1.14.0")
+
+
+@pytest.mark.parametrize(
+    ("requested", "answered", "unexpected"),
+    [
+        ("jev-1.14.0", "jev-1.14.0", False),
+        ("jev-1.14.0", "jev-1.15.0", True),
+        ("jev-latest", "jev-1.15.0", False),  # an alias pins nothing
+        (None, "jev-1.15.0", False),  # the SDK default
+        ("jev-1.14.0", None, False),  # the API did not say
+    ],
+)
+def test_only_a_pinned_version_answered_by_another_one_is_unexpected(
+    requested: str | None, answered: str | None, unexpected: bool
+) -> None:
+    assert RequestMeta(290, answered, requested_model=requested).unexpected_model is unexpected

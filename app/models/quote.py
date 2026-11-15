@@ -7,13 +7,14 @@ class QuoteStatus(StrEnum):
     NEEDS_REVIEW = "needs_review"  # carrier chosen, but something uncertain needs a human look
     NEEDS_INPUT = "needs_input"  # order too ambiguous to decide; no carrier chosen
     NO_CARRIER = "no_carrier"  # every carrier fails a constraint (reasons included)
+    NEEDS_CONFIRMATION = "needs_confirmation"  # the description contradicts an entered field; resend confirmed
 
 
 @dataclass(frozen=True, slots=True)
 class JevCall:
     """One answer from Jev, kept in the response so every model influence is visible."""
 
-    step: str  # cargo_type | container_size | compatibility
+    step: str  # cargo_type | container_size | cargo_check | requested_carrier | compatibility
     subject: str  # what was asked about (e.g. carrier name)
     answer: str  # chosen label or "yes"/"no"
     confidence: float  # choice confidence, or P(yes) for yes/no questions

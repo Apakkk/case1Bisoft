@@ -5,9 +5,10 @@ descriptions) and the questions themselves (their instructions and labels, carri
 these makes a new question, so an answer is never reused for something Jev was not asked. Prices, rules and distances
 are not part of an answer, so a quote is still worked out afresh from today's data on every request.
 
-The model is not pinned (JEV_MODEL empty means the `jev-latest` alias), so an answer is used only while it is younger
-than MAX_AGE_SECONDS and comes from the model that answered most recently: when the alias moves to a new version, the
-first fresh answer reports it and older answers stop being used. The memory is emptied by a restart.
+The model is pinned by default (JEV_MODEL, jev-1.14.0), but the API was not shown to refuse a name it does not know,
+and JEV_MODEL may be set to the `jev-latest` alias. So an answer is used only while it is younger than MAX_AGE_SECONDS
+and comes from the model that answered most recently: when the answering version changes, the first fresh answer
+reports it and older answers stop being used. The memory is emptied by a restart.
 """
 
 import hashlib

@@ -5,11 +5,12 @@
 <hgroup>
   <h2>Teklif al</h2>
   <p><code>POST /api/v1/quotes</code> ile aynı servis. Sipariş açıklaması yazılırsa Jev her uygun firmanın
-     açıklamasıyla karşılaştırır; uyumsuz firma elenir. Konteyner veya yük tipi boş bırakılırsa açıklamadan çıkarılır.</p>
+     açıklamasıyla karşılaştırır; uyumsuz firma elenir. Konteyner veya yük tipi boş bırakılırsa açıklamadan çıkarılır;
+     seçilen değerle açıklama çelişirse devam etmeden önce onay istenir.</p>
 </hgroup>
 <p class="muted">Geçerli öncelik: {{ ranking | join(" → ") }} · <a href="/admin/rules">değiştir</a><br>
    Sipariş açıklamasında istenen firma varsa ve uygunsa önce o önerilir.</p>
-<form hx-post="/admin/quote" hx-target="#result">
+<form id="quote-form" hx-post="/admin/quote" hx-target="#result">
   <div class="grid">
     {{ city_input("origin", "Çıkış", "Miami") }}
     {{ city_input("destination", "Varış", "Atlanta") }}

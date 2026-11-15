@@ -32,6 +32,7 @@ def run_quote(
     container_size: Annotated[str, Form()] = "",
     cargo_type: Annotated[str, Form()] = "",
     description: Annotated[str, Form()] = "",
+    confirm_mismatch: Annotated[str, Form()] = "",  # the checkbox on a needs_confirmation result
 ) -> Response:
     try:
         order = QuoteRequest.model_validate(
@@ -41,6 +42,7 @@ def run_quote(
                 "container_size": container_size or None,
                 "cargo_type": cargo_type or None,
                 "description": description.strip() or None,
+                "confirm_mismatch": confirm_mismatch == "true",
             }
         )
         quote = QuoteResponse.from_quote(service.quote(order))

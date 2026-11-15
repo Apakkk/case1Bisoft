@@ -34,6 +34,13 @@ class RequestMeta:
     input_tokens: int | None = None  # billable; 0 for an answer from the cache
     model: str | None = None
     cached: bool = False  # answered from memory, no request sent
+    requested_model: str | None = None  # JEV_MODEL as configured (None: the SDK default)
+
+    @property
+    def unexpected_model(self) -> bool:
+        """A pinned version was asked for but another one answered (an alias such as jev-latest pins nothing)."""
+        pinned = self.requested_model is not None and not self.requested_model.endswith(("-latest", "-preview"))
+        return pinned and self.model is not None and self.model != self.requested_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +91,9 @@ CARGO_DESCRIPTIONS = {
     "Reefer": "perishable; must be refrigerated or frozen",
     "Hazardous": "dangerous goods: flammable, explosive, toxic, corrosive, gases, lithium batteries",
 }
+# Offered with every cargo question: without it a text about carriers or dates would be forced into a cargo type.
+NOT_STATED = "not_stated"
+NOT_STATED_DESCRIPTION = "the text does not say what the cargo is"
 CONFLICT: NoulCriteria = {
     "true": "Clear conflict for this carrier: the order note refuses it or demands something its description "
     "contradicts, or its description excludes this order.",
@@ -128,10 +138,9 @@ class TypesafeJevClient:
     ) -> OrderClassification:
         questions: dict[str, Any] = {}
         if cargo_types:
-            questions["cargo_type"] = Choice(
-                instructions="Cargo category of this shipment",
-                criteria={t: CARGO_DESCRIPTIONS.get(t) for t in cargo_types},
-            )
+            criteria: dict[str, str | None] = {t: CARGO_DESCRIPTIONS.get(t) for t in cargo_types}
+            criteria[NOT_STATED] = NOT_STATED_DESCRIPTION
+            questions["cargo_type"] = Choice(instructions="Cargo category of this shipment", criteria=criteria)
         if container_sizes:
             questions["container_size"] = Choice(
                 instructions="Container length in feet stated in the text",
@@ -192,7 +201,7 @@ class TypesafeJevClient:
             remembered = self._cache.get(key)
             if remembered is not None:
                 logger.info("jev %s: answered from the cache, model %s", what, remembered.model)
-                return remembered, 0, RequestMeta(0, remembered.model, cached=True)
+                return remembered, 0, RequestMeta(0, remembered.model, cached=True, requested_model=self._model)
         wait = self._paused_until - self._clock()
         if wait > 0:
             raise JevUnavailableError(f"not asked for another {wait:.0f} s after a recent failure")
@@ -206,7 +215,7 @@ class TypesafeJevClient:
         elapsed = int((time.perf_counter() - started) * 1000)
         if self._cache is not None and key is not None:
             self._cache.put(key, result)
-        meta = RequestMeta(result.usage.input_tokens, result.model)
+        meta = RequestMeta(result.usage.input_tokens, result.model, requested_model=self._model)
         logger.info("jev %s: %s input tokens, model %s, %d ms", what, meta.input_tokens, meta.model, elapsed)
         return result, elapsed, meta
 

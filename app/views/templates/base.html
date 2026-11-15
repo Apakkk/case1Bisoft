@@ -23,6 +23,10 @@
     fieldset.inline label { display: inline-flex; margin-right: 1rem; }
     .htmx-request { opacity: .6; transition: opacity .2s; }
     pre.explanation { white-space: pre-wrap; font-family: inherit; }
+    .confirmation { border-left: 4px solid #e0a100; background: rgba(224, 161, 0, .12); padding: .8rem 1rem;
+      border-radius: var(--pico-border-radius); margin-bottom: 1rem; }
+    .confirmation form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: 0 0 .5rem; }
+    .confirmation form label, .confirmation form button { margin: 0; width: auto; }
     /* City suggestions (_city_input.html, static/city-autocomplete.js) */
     .city-box { position: relative; margin-bottom: var(--pico-spacing); }
     .city-box > input { margin-bottom: 0; }

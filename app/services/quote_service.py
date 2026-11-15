@@ -1,8 +1,9 @@
 """Quote flow: resolve order -> distance -> filter -> HQ distances -> rank -> compatibility -> status -> explanation.
 
 Business rules live in app/selection (pure). Jev is consulted only where the *data* is free text:
-the order's description (missing fields, requirements) and the carriers' descriptions. Low confidence
-never becomes a guess: it becomes `needs_review` or `needs_input`.
+the order's description (missing fields, a cargo type that contradicts the entered one, requirements) and the
+carriers' descriptions. Low confidence never becomes a guess: it becomes `needs_review` or `needs_input`; a
+description that contradicts an entered field becomes `needs_confirmation` until the user confirms.
 """
 
 from collections.abc import Mapping
@@ -12,6 +13,7 @@ from decimal import Decimal
 from app.clients.distance.chain import DistanceProvider, DistanceResult, UnknownLocationError
 from app.clients.jev_client import (
     NO_REQUEST,
+    NOT_STATED,
     ChoiceResult,
     CompatibilityCheck,
     JevClient,
@@ -24,6 +26,14 @@ from app.models.quote import JevCall, JevUsage, QuoteStatus, ResolvedOrder
 from app.repositories.carrier_repository import CarrierRepository
 from app.repositories.rules_repository import RulesSource
 from app.schemas.quote import QuoteRequest
+from app.selection.consistency import (
+    FIELD_LABELS,
+    Mismatch,
+    OrderField,
+    cargo_mismatch,
+    confirmation_question,
+    size_mismatch,
+)
 from app.selection.engine import (
     boundary_warnings,
     distance_sensitive,
@@ -39,7 +49,6 @@ from app.selection.rules import RuleSet
 from app.selection.types import Candidate, Rejection
 
 HAZARDOUS = "Hazardous"
-_FIELD_LABELS = {"container_size": "konteyner ölçüsü", "cargo_type": "yük tipi"}
 
 
 class InvalidOrderError(ValueError):
@@ -60,6 +69,7 @@ class Quote:
     requested: str | None = None  # carrier the order description asks for (Jev), if any
     hq_distances: Mapping[str, DistanceResult] = field(default_factory=dict)  # carrier -> HQ to origin
     jev_usage: JevUsage = field(default_factory=JevUsage)
+    mismatches: tuple[Mismatch, ...] = ()  # entered fields the description contradicts (needs_confirmation)
 
 
 @dataclass
@@ -70,6 +80,8 @@ class _Trace:
     warnings: list[str] = field(default_factory=list)
     review: bool = False
     usage: JevUsage = field(default_factory=JevUsage)
+    mismatches: list[Mismatch] = field(default_factory=list)
+    on_confirm: list[str] = field(default_factory=list)  # review reasons that apply once a mismatch is confirmed
 
     def flag(self, warning: str) -> None:
         self.warnings.append(warning)
@@ -81,6 +93,13 @@ class _Trace:
         self.usage = JevUsage(
             u.requests + 1, u.input_tokens + (meta.input_tokens or 0), meta.model or u.model, u.cached + meta.cached
         )
+        if meta.unexpected_model:
+            warning = (
+                f"Jev modeli {meta.requested_model} istendi ama {meta.model} cevapladı; "
+                f"güven eşikleri {meta.requested_model} ile ölçüldü."
+            )
+            if warning not in self.warnings:
+                self.warnings.append(warning)
 
 
 class QuoteService:
@@ -105,6 +124,16 @@ class QuoteService:
         resolved = self._resolve_order(request, rules, trace)
         if resolved.container_size is None or resolved.cargo_type is None:
             return self._needs_input(resolved, trace)
+        if trace.mismatches:
+            if not request.confirm_mismatch:
+                return self._needs_confirmation(resolved, trace)
+            for m in trace.mismatches:
+                trace.warnings.append(
+                    f"{FIELD_LABELS[m.field].capitalize()} açıklamayla uyumsuz: {m.detail()}; "
+                    "kullanıcı onayıyla girilen değerle devam edildi."
+                )
+            for reason in trace.on_confirm:
+                trace.flag(reason)
 
         order = Order(resolved.origin, resolved.destination, resolved.container_size, resolved.cargo_type)
         distance = self._distances.miles(
@@ -178,6 +207,10 @@ class QuoteService:
             size = parse_container_size(text, rules.container_sizes)  # deterministic first
             if size is not None:
                 inferred["container_size"] = "text"
+        elif text:  # an entered size is checked against a size stated in the text, without Jev
+            mismatch = size_mismatch(size, parse_container_size(text, rules.container_sizes))
+            if mismatch is not None:
+                trace.mismatches.append(mismatch)
 
         cargo: str | None = None
         if request.cargo_type is not None:
@@ -187,10 +220,8 @@ class QuoteService:
                     f"cargo_type '{request.cargo_type}' is not in the catalog ({', '.join(rules.cargo_types)})"
                 )
 
-        if size is None or cargo is None:
-            jev_size, jev_cargo = self._interpret(
-                text, rules, need_size=size is None, need_cargo=cargo is None, trace=trace
-            )
+        if size is None or cargo is None or text:  # with an entered cargo type the text is only checked
+            jev_size, jev_cargo = self._interpret(text, rules, need_size=size is None, cargo=cargo, trace=trace)
             if size is None and jev_size is not None:
                 size, inferred["container_size"] = jev_size, "jev"
             if cargo is None and jev_cargo is not None:
@@ -212,42 +243,77 @@ class QuoteService:
         )
 
     def _interpret(
-        self, text: str, rules: RuleSet, *, need_size: bool, need_cargo: bool, trace: _Trace
+        self, text: str, rules: RuleSet, *, need_size: bool, cargo: str | None, trace: _Trace
     ) -> tuple[int | None, str | None]:
+        """One Jev request on the description alone: fill missing fields, and check an entered cargo type.
+
+        Jev is shown the text only, never the entered cargo type, so it cannot simply agree with the form.
+        Returns the size and cargo type Jev filled in (None for an entered field).
+        """
+        need_cargo = cargo is None
         if self._jev is None:
-            trace.warnings.append("Jev yapılandırılmamış; serbest metin yorumlanamadı.")
+            self._not_interpreted("Jev yapılandırılmamış", need_size or need_cargo, not need_cargo, trace)
             return None, None
         try:
-            result = self._jev.classify_order(
-                text,
-                rules.cargo_types if need_cargo else None,
-                rules.container_sizes if need_size else None,
-            )
+            result = self._jev.classify_order(text, rules.cargo_types, rules.container_sizes if need_size else None)
         except JevUnavailableError:
-            trace.warnings.append("Jev'e ulaşılamadı; serbest metin yorumlanamadı.")
+            self._not_interpreted("Jev'e ulaşılamadı", need_size or need_cargo, not need_cargo, trace)
             return None, None
         trace.spent(result.meta)
 
-        cargo = self._accept("cargo_type", result.cargo_type, result.elapsed_ms, text, rules, trace)
+        if need_cargo:
+            cargo = self._accept("cargo_type", result.cargo_type, result.elapsed_ms, text, rules, trace)
+        else:
+            assert cargo is not None
+            self._check_entered_cargo(cargo, result.cargo_type, result.elapsed_ms, text, rules, trace)
         size_label = self._accept("container_size", result.container_size, result.elapsed_ms, text, rules, trace)
 
         if result.cargo_type is not None and cargo is not None and cargo != HAZARDOUS:
             p_hazardous = result.cargo_type.probabilities.get(HAZARDOUS, 0.0)
             if p_hazardous >= rules.confidence.hazardous_review:
-                trace.flag(
+                reason = (
                     f"Tehlikeli yük olasılığı {p_hazardous:.2f} (eşik {rules.confidence.hazardous_review:.2f}); "
                     "manuel inceleme gerekli."
                 )
-        return (int(size_label) if size_label is not None else None), cargo
+                if any(m.field == "cargo_type" for m in trace.mismatches):
+                    trace.on_confirm.append(reason)  # the confirmation question comes first
+                else:
+                    trace.flag(reason)
+        return (int(size_label) if size_label is not None else None), (cargo if need_cargo else None)
+
+    @staticmethod
+    def _not_interpreted(reason: str, filling: bool, checking: bool, trace: _Trace) -> None:
+        """Jev could not read the text: missing fields stay missing; an entered cargo type goes to a human."""
+        if filling:
+            trace.warnings.append(f"{reason}; serbest metin yorumlanamadı.")
+        if checking:
+            trace.flag(f"Girilen yük tipi açıklamayla karşılaştırılamadı ({reason}).")
+
+    def _check_entered_cargo(
+        self, entered: str, answer: ChoiceResult | None, elapsed_ms: int, text: str, rules: RuleSet, trace: _Trace
+    ) -> None:
+        if answer is None:
+            trace.flag("Girilen yük tipi açıklamayla karşılaştırılamadı (Jev bu soruyu cevaplamadı).")
+            return
+        trace.jev_calls.append(
+            JevCall("cargo_check", _short(text), answer.choice, round(answer.confidence, 3), elapsed_ms)
+        )
+        described = None if answer.choice == NOT_STATED else answer.choice
+        mismatch = cargo_mismatch(entered, described, answer.confidence, rules.confidence)
+        if mismatch is not None:
+            trace.mismatches.append(mismatch)
 
     def _accept(
-        self, name: str, choice: ChoiceResult | None, elapsed_ms: int, text: str, rules: RuleSet, trace: _Trace
+        self, name: OrderField, choice: ChoiceResult | None, elapsed_ms: int, text: str, rules: RuleSet, trace: _Trace
     ) -> str | None:
         """Apply the confidence bands: accept, accept-with-review, or refuse to guess."""
         if choice is None:
             return None
         trace.jev_calls.append(JevCall(name, _short(text), choice.choice, round(choice.confidence, 3), elapsed_ms))
-        label, bands = _FIELD_LABELS[name], rules.confidence
+        label, bands = FIELD_LABELS[name], rules.confidence
+        if choice.choice == NOT_STATED:
+            trace.warnings.append(f"Açıklamada {label} geçmiyor (Jev, güven {choice.confidence:.2f}); tahmin edilmedi.")
+            return None
         if choice.confidence >= bands.auto_accept:
             return choice.choice
         if choice.confidence >= bands.needs_review:
@@ -263,7 +329,7 @@ class QuoteService:
         return None
 
     def _needs_input(self, order: ResolvedOrder, trace: _Trace) -> Quote:
-        missing = [label for name, label in _FIELD_LABELS.items() if getattr(order, name) is None]
+        missing = [label for name, label in FIELD_LABELS.items() if getattr(order, name) is None]
         return Quote(
             status=QuoteStatus.NEEDS_INPUT,
             order=order,
@@ -275,6 +341,24 @@ class QuoteService:
             warnings=tuple(trace.warnings),
             explanation=f"Firma seçilmedi: {' ve '.join(missing)} belirlenemedi. Lütfen açıkça belirtin.",
             jev_usage=trace.usage,
+        )
+
+    def _needs_confirmation(self, order: ResolvedOrder, trace: _Trace) -> Quote:
+        """The description contradicts an entered field: ask before choosing (no distance, carriers or more Jev)."""
+        mismatches = tuple(trace.mismatches)
+        details = "; ".join(f"{FIELD_LABELS[m.field].capitalize()}: {m.detail()}" for m in mismatches)
+        return Quote(
+            status=QuoteStatus.NEEDS_CONFIRMATION,
+            order=order,
+            selected=None,
+            distance=None,
+            ranking=(),
+            rejected=(),
+            jev_calls=tuple(trace.jev_calls),
+            warnings=tuple(trace.warnings),
+            explanation=f"Firma seçilmedi. {confirmation_question(mismatches)} {details}.",
+            jev_usage=trace.usage,
+            mismatches=mismatches,
         )
 
     # --- order note <-> carrier descriptions -------------------------------------------------
