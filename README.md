@@ -92,8 +92,9 @@ every external dependency is injected through an interface and wired in one plac
 
 1. **Validate and normalize** the order: city aliases (`Ft. Lauderdale` → `Fort Lauderdale`),
    catalog values (`reefer` → `Reefer`).
-2. **Fill missing fields** from the order's `description`: a regex first (`40 ft`, `40'lık`, `40HC`;
-   a unit is required so "20 tons" is never 20 ft), then Jev, with confidence bands.
+2. **Fill missing fields** from the order's `description`: a regex first (`40 ft`, `40'lık`, `40HC`, `2x40HC`;
+   a unit is required so "20 tons" is never 20 ft, and a date like "ayın 20'sinde" is not a size), then Jev,
+   with confidence bands.
 3. **Distance** from the chain below (never estimated by a model).
 4. **Filter**: every carrier through every hard constraint; all failure reasons are kept.
 5. **Price** each eligible carrier with `Decimal`, rounded half-up to cents.
@@ -167,6 +168,7 @@ labeled sample for the pinned model version.
 | Compatibility: 0.15 < P(conflict) < 0.85 on the winner | Winner kept, status `needs_review` |
 | Requested carrier: confidence ≥ 0.85 / 0.60–0.85 / < 0.60 | Used / used with `needs_review` / ignored with a warning (price order applies) |
 | Jev unavailable (timeout, auth, quota) or not configured | Missing fields → `needs_input`; an order description or restrictive carrier descriptions → `needs_review`. The ranking is kept and nothing is silently skipped. After a failure Jev is not asked for 30 s, so an outage costs one timeout (~10 s with the one retry), not one per quote |
+| A container count in the description ("3 adet", "2x40HC") | Price for one container, status `needs_review` with a warning (no Jev request) |
 | Approximate distance within 10% of the limit of a carrier that passes every other constraint | `needs_review`: the real road distance could change eligibility. A carrier that is out anyway (wrong size or cargo type) does not trigger it |
 
 ## Distance
@@ -332,7 +334,7 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 352 tests, no database/network/Jev, ~2 s
+make test        # 391 tests, no database/network/Jev, ~2 s
 make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API
@@ -359,6 +361,7 @@ since the app started returns `500 INVALID_RULES`.
 **Change the ranking priority on screen.** `/admin/rules` lists the ranking criteria: move them up or
 down, remove or add them, then save. Saving rewrites only the `ranking` block of `rules.yaml` (comments
 and other sections are kept) after validating it. A criterion added in code appears there automatically.
+At least one criterion must stay: with none, carriers would be chosen by name alone, so that save is refused.
 
 **Add a carrier.** Use the admin screen or `POST /api/v1/carriers`. Its HQ city is normalized; a
 description is pre-checked by Jev and shown as a badge.
@@ -414,6 +417,8 @@ end to end against PostgreSQL; in this order:
 `CONSTRAINTS` (`app/selection/constraints.py`), and its name under `filters`.
 
 **Add a cargo type or container size**: one line in `catalog`. Orders and carriers accept it at once.
+Removing one does not change stored carriers: their edit form shows the value ticked and marked
+"katalogda yok", and saving is refused until it is unticked, so an edit never drops it silently.
 
 **Tune Jev thresholds**: the `confidence` section.
 
@@ -445,6 +450,9 @@ end to end against PostgreSQL; in this order:
 - "Closest to the departure point" is read as the carrier HQ's distance to the order origin.
 - Distance limits are inclusive (`<=`, `>=`); an empty limit means unbounded.
 - Confidence thresholds are starting values, not calibrated on a labeled set yet.
+- A quote prices one container. An order has no quantity field yet; a count in the description
+  ("3 adet", "2x40HC", "three containers") makes the quote `needs_review` with a warning that one
+  container was priced. Whether carriers have a capacity limit is not defined by the case.
 - Free text (order or carrier description) can only narrow eligibility; it never re-ranks. Missing
   information is not a conflict. Price-changing notes ("+20% over 500 miles") need a structured
   field, because Jev does not do arithmetic.

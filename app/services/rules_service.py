@@ -44,6 +44,8 @@ class RulesService:
             raise RulesError(f"unknown ranking criterion: {', '.join(unknown)}")
         if len(set(ranking)) != len(ranking):
             raise RulesError("duplicate ranking criteria")
+        if not [name for name in ranking if name != FINAL_TIE_BREAKER]:
+            raise RulesError("en az bir sıralama kriteri gerekli; yalnızca firma adıyla seçim yapılamaz")
         return self._store.save_ranking(ranking)
 
 

@@ -35,6 +35,12 @@
         <label><input type="checkbox" name="container_sizes" value="{{ size }}"
                {% if size|string in form.container_sizes %}checked{% endif %}> {{ size }}</label>
       {% endfor %}
+      {# A value removed from the catalog stays visible: saving must not drop it silently. #}
+      {% set catalog_sizes = catalog.container_sizes|map("string")|list %}
+      {% for size in form.container_sizes if size not in catalog_sizes %}
+        <label><input type="checkbox" name="container_sizes" value="{{ size }}" checked>
+          {{ size }} <small class="error">katalogda yok</small></label>
+      {% endfor %}
       {% if errors.container_sizes %}<small class="error">{{ errors.container_sizes }}</small>{% endif %}
     </fieldset>
     <fieldset class="inline">
@@ -42,6 +48,10 @@
       {% for cargo in catalog.cargo_types %}
         <label><input type="checkbox" name="cargo_types" value="{{ cargo }}"
                {% if cargo in form.cargo_types %}checked{% endif %}> {{ cargo }}</label>
+      {% endfor %}
+      {% for cargo in form.cargo_types if cargo not in catalog.cargo_types %}
+        <label><input type="checkbox" name="cargo_types" value="{{ cargo }}" checked>
+          {{ cargo }} <small class="error">katalogda yok</small></label>
       {% endfor %}
       {% if errors.cargo_types %}<small class="error">{{ errors.cargo_types }}</small>{% endif %}
     </fieldset>

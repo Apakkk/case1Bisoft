@@ -34,7 +34,7 @@ from app.selection.engine import (
     with_requested,
 )
 from app.selection.explanation import Outcome, explain
-from app.selection.order_text import parse_container_size
+from app.selection.order_text import parse_container_size, several_containers
 from app.selection.rules import RuleSet
 from app.selection.types import Candidate, Rejection
 
@@ -195,6 +195,11 @@ class QuoteService:
                 size, inferred["container_size"] = jev_size, "jev"
             if cargo is None and jev_cargo is not None:
                 cargo, inferred["cargo_type"] = jev_cargo, "jev"
+
+        counts = several_containers(text)
+        if counts:  # a quote prices one container; the count is not silently dropped
+            stated = ", ".join(f'"{c}"' for c in counts)
+            trace.flag(f"Açıklamada birden fazla konteyner geçiyor ({stated}); ücret tek konteyner için hesaplandı.")
 
         return ResolvedOrder(
             origin=origin,

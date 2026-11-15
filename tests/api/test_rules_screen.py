@@ -80,6 +80,16 @@ def test_saving_writes_rules_yaml_and_the_next_quote_uses_it(screen: Screen) -> 
     assert "Belirleyici kriter: merkezin çıkış noktasına uzaklığı" in data["explanation"]
 
 
+def test_saving_with_every_criterion_removed_is_refused(screen: Screen) -> None:
+    before = screen.path.read_text()
+
+    html = screen.client.post("/admin/rules/ranking", data={}).text
+
+    assert "Kaydedilemedi" in html and "en az bir sıralama kriteri" in html
+    assert screen.path.read_text() == before
+    assert screen.client.post("/api/v1/quotes", json=ORDER).json()["carrier"] == "S-Logistics"
+
+
 def test_quote_page_shows_the_current_priority(screen: Screen) -> None:
     html = screen.client.get("/admin/quote").text
 

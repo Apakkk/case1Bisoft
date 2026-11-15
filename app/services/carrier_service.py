@@ -1,5 +1,7 @@
 """Carrier CRUD shared by the JSON API and the admin screen: one place for validation."""
 
+from collections.abc import Iterable
+
 from app.clients.distance.chain import DistanceProvider, UnknownLocationError
 from app.clients.jev_client import JevClient, JevUnavailableError
 from app.models.carrier import Carrier, NoteStatus
@@ -62,24 +64,27 @@ class CarrierService:
     def _build(self, data: CarrierIn, existing: Carrier | None) -> Carrier:
         rules = self._rules.get()
         errors: dict[str, str] = {}
+        turkish: dict[str, str] = {}
 
         unknown_sizes = sorted(set(data.container_sizes) - set(rules.container_sizes))
         if unknown_sizes:
-            errors["container_sizes"] = (
-                f"not in the catalog: {', '.join(map(str, unknown_sizes))} "
-                f"(allowed: {', '.join(map(str, rules.container_sizes))})"
-            )
+            allowed = ", ".join(map(str, rules.container_sizes))
+            errors["container_sizes"] = f"not in the catalog: {', '.join(map(str, unknown_sizes))} (allowed: {allowed})"
+            turkish["container_sizes"] = _not_in_catalog(map(str, unknown_sizes), allowed)
 
         cargo_types: set[str] = set()
+        unknown_cargo: list[str] = []
         for raw in data.cargo_types:
             canonical = rules.canonical_cargo_type(raw)
             if canonical is None:
+                unknown_cargo.append(raw)
                 errors["cargo_types"] = f"'{raw}' is not in the catalog (allowed: {', '.join(rules.cargo_types)})"
             else:
                 cargo_types.add(canonical)
+        if unknown_cargo:
+            turkish["cargo_types"] = _not_in_catalog(unknown_cargo, ", ".join(rules.cargo_types))
 
         # Before the note pre-check: an unknown city must not cost Jev tokens.
-        turkish: dict[str, str] = {}
         hq_city = data.hq_city
         try:
             hq_city = self._distances.normalize(data.hq_city)
@@ -120,3 +125,8 @@ class CarrierService:
             return NoteStatus.UNCHECKED, None
         no_restriction = p <= 1 - self._rules.get().confidence.auto_accept
         return (NoteStatus.NONE if no_restriction else NoteStatus.CONSTRAINT), round(p, 3)
+
+
+def _not_in_catalog(values: Iterable[str], allowed: str) -> str:
+    """Screen message for a value removed from the catalog: it has to be unticked on purpose."""
+    return f"Katalogda yok: {', '.join(values)}. Kaydetmek için işaretini kaldırın (katalog: {allowed})."

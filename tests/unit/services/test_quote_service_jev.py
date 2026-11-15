@@ -104,6 +104,25 @@ def test_jev_outage_asks_for_input_instead_of_failing() -> None:
     assert any("Jev'e ulaşılamadı" in w for w in quote.warnings)
 
 
+def test_a_count_in_the_description_keeps_the_price_but_needs_review() -> None:
+    single = service(FakeJev()).quote(miami_atlanta(container_size=20, cargo_type="Reefer"))
+
+    quote = service(FakeJev()).quote(miami_atlanta(container_size=20, cargo_type="Reefer", description="3 adet"))
+
+    assert quote.status is QuoteStatus.NEEDS_REVIEW
+    assert quote.selected is not None and single.selected is not None
+    assert (quote.selected.carrier.name, quote.selected.total_cost) == ("B-Logistics", single.selected.total_cost)
+    assert 'Açıklamada birden fazla konteyner geçiyor ("3 adet"); ücret tek konteyner için hesaplandı.' in (
+        quote.warnings
+    )
+
+
+def test_a_single_container_is_not_flagged() -> None:
+    quote = service(FakeJev()).quote(miami_atlanta(container_size=20, cargo_type="Reefer", description="1 adet"))
+
+    assert quote.status is QuoteStatus.SELECTED
+
+
 # --- carrier notes --------------------------------------------------------------------------
 
 

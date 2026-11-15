@@ -73,3 +73,13 @@ def test_service_validates_before_saving() -> None:
 
     assert store.saved == [["hq_proximity", "total_cost"]]
     assert service.active_ranking() == ["hq_proximity", "total_cost"]
+
+
+@pytest.mark.parametrize("ranking", [[], ["name"]])
+def test_a_ranking_without_criteria_is_refused(ranking: list[str]) -> None:
+    store = MemoryStore()
+
+    with pytest.raises(RulesError, match="en az bir sıralama kriteri"):
+        RulesService(store).save_ranking(ranking)
+
+    assert store.saved == []

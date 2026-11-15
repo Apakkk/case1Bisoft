@@ -126,6 +126,25 @@ def test_edit_form_is_prefilled_and_update_saves(screen: Screen) -> None:
     assert updated is not None and str(updated.rate_per_mile) == "0.45"
 
 
+def test_a_value_removed_from_the_catalog_is_not_dropped_silently(screen: Screen) -> None:
+    m_logistics = next(c for c in screen.repo.list() if c.name == "M-Logistics")
+    screen.rules.rules = default_rules(catalog={"cargo_types": ["Dry", "Reefer"], "container_sizes": [20, 40, 45]})
+    url = f"/admin/carriers/{m_logistics.id}"
+
+    form = screen.client.get(f"{url}/edit").text
+    assert 'value="Hazardous" checked' in form and "katalogda yok" in form
+
+    data = {**VALID, "name": "M-Logistics", "hq_city": "Houston", "rate_per_mile": "1.10", "max_miles": ""}
+    refused = screen.client.put(url, data={**data, "cargo_types": ["Dry", "Reefer", "Hazardous"]}).text
+    assert "Katalogda yok: Hazardous. Kaydetmek için işaretini kaldırın" in refused
+    assert screen.repo.get(m_logistics.id or 0) == m_logistics
+
+    saved = screen.client.put(url, data={**data, "cargo_types": ["Dry", "Reefer"]}).text
+    assert "M-Logistics kaydedildi." in saved
+    updated = screen.repo.get(m_logistics.id or 0)
+    assert updated is not None and updated.cargo_types == {"Dry", "Reefer"}
+
+
 def test_delete_removes_the_row(screen: Screen) -> None:
     carrier_id = screen.repo.list()[0].id
 
