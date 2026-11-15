@@ -7,7 +7,8 @@ description (and fills order fields that were left empty).
 
 - REST API: `POST /api/v1/quotes`, `/api/v1/carriers` and `GET /api/v1/cities` (Swagger at `/docs`)
 - Admin screen: carrier CRUD with an editable free-text description, a quote form and a rules page;
-  every city input suggests US cities as you type
+  every city input suggests US cities as you type, and a mistyped city is answered with "did you mean"
+- Distances: the case table always wins; other routes come from OpenRouteService once and are stored
 - Rules in `config/rules.yaml`: putting price second is a click on `/admin/rules` (or a YAML edit), not code
 - The 7 orders from the case are tests (unit, service, API and end-to-end against PostgreSQL)
 
@@ -77,7 +78,8 @@ app/
   services/      Quote, Carrier, City services        selection/   pure rules: no I/O, mypy --strict
   repositories/  PostgreSQL (parametrized SQL), rules  clients/     Jev adapter, distance chain, ORS
   models/        domain dataclasses                   schemas/     Pydantic API DTOs
-config/          rules.yaml, distances.yaml (case table), cities.csv, city_aliases.yaml
+config/          rules.yaml, distances.yaml (case table), cities.csv + city_aliases.yaml (case catalog),
+                 us_cities.csv (5,105 US cities, built by scripts/build_us_cities.py)
 db/init/         schema + seed (run once on an empty volume); db/migrations/ for later changes
 ```
 
@@ -155,38 +157,98 @@ labeled sample for the pinned model version.
 
 ## Distance
 
+The case gives an approximate table of seven routes and allows a geocoding/distance API for the rest.
+The rules:
+
+1. **The case table always wins.** Its pairs never reach the routing service, in either direction and
+   under any spelling (`Ft. Lauderdale`, `MIAMI, FL`); a test makes every pair fail if a request is sent.
+2. **A route outside the table is asked once and stored**, so the same pair gives the same answer later.
+3. **US cities only, never guessed** (see [Cities](#cities) below).
+4. **Every distance says where it came from**, the HQ distances in the ranking too.
+
 `DistanceProvider` tries, in order:
 
 1. Same city → 0
-2. The case's table (`config/distances.yaml`, symmetric)
+2. The case's table (`config/distances.yaml`, symmetric). Re-read on the next request after an edit,
+   so a pair added during a demo applies without a restart; a broken edit keeps the last good table
+   and the quote shows a warning (a broken file at startup fails fast)
 3. PostgreSQL cache of earlier routing results (A–B and B–A share one row)
-4. OpenRouteService driving distance (if `ORS_API_KEY` is set). Coordinates come from `cities.csv`,
-   then the `cities` table (cities found by the suggestions below), and only then from ORS geocoding
-5. Haversine × 1.2 using `config/cities.csv`; flagged `approximate: true`
-6. Otherwise `422 UNKNOWN_LOCATION`
+4. OpenRouteService driving distance (if `ORS_API_KEY` is set)
+5. Haversine × 1.2; flagged `approximate: true`
 
-HQ → origin distances (for the tie-break) use the same chain and are only looked up when more than
-one carrier is eligible. A carrier whose HQ cannot be located is ranked last with a warning.
+`source` in the response is `same_city`, `case_table`, `cache`, `ors` or `haversine`; the screen shows
+it in Turkish. HQ → origin distances (for the tie-break) use the same chain, are only looked up when
+more than one carrier is eligible, and carry their own `hq_distance_source`.
+
+Why not take every distance from the API? Measured once (2026-11-12, 7 ORS requests):
+
+| Route | Case table | ORS road distance | Difference |
+|---|---|---|---|
+| Miami – Fort Lauderdale | 30 | 29.1 | −3.0% |
+| Miami – Orlando | 235 | 235.6 | +0.3% |
+| Miami – Atlanta | 660 | 663.4 | +0.5% |
+| Jacksonville – Savannah | 140 | 139.2 | −0.6% |
+| Tampa – Jacksonville | 200 | 198.7 | −0.6% |
+| Miami – Houston | 1190 | 1188.2 | −0.2% |
+| Tampa – Orlando | 85 | 84.2 | −0.9% |
+
+The map agrees within 3%, yet with these numbers 6 of the 7 case orders get a different price (the
+same winner): order 2 would cost $94.24 instead of $94.00. Distance limits sit on table values too
+(A-Logistics: up to 200 miles, Tampa – Jacksonville: 200), so the table is the contract and the API
+only fills the gaps.
+
+## Cities
+
+A city is resolved once, when an order or a carrier is saved, to a known US city:
+
+1. The case catalog (`cities.csv` + `city_aliases.yaml`: `Ft. Lauderdale`, `NYC`, `JAX`)
+2. `config/us_cities.csv`: 5,105 US cities and towns with 5,000+ people (GeoNames, CC BY 4.0), kept
+   only if the US Census Bureau lists them as a place (public domain), so no neighbourhoods. One row
+   per name, the most populous: Portland is Portland, OR; Manhattan is Manhattan, KS
+3. The `cities` table: towns found earlier through OpenRouteService
+4. OpenRouteService geocoding (US, localities only), accepted **only if the name is exactly the one
+   typed**; stored, so the next time it is local
+
+Otherwise `422 UNKNOWN_LOCATION` with suggestions, before any Jev tokens are spent:
+
+```json
+{"error": "UNKNOWN_LOCATION", "detail": "location not found: Tamap (did you mean: Tampa, FL?)",
+ "city": "Tamap", "problem": "not_found", "suggestions": [{"name": "Tampa", "state": "FL"}]}
+```
+
+| `problem` | Example | Answer |
+|---|---|---|
+| `not_found` | `Tamap`, `Jacksonvile` | Similar spellings (`difflib`): Tampa, FL / Jacksonville, FL |
+| `outside_us` | `Amsterdam, Netherlands` | Only US cities; the US city of that name: Amsterdam, NY |
+| `other_state` | `Portland, ME` | Cities are known by name; this name is Portland, OR |
+| `unverified` | any unknown town while ORS is down or not configured | Similar spellings, if any |
+
+A state after a comma may be a code or a name (`Miami, FL`, `Miami, Florida`) and must be the city's.
+The quote shows the resolved city with its state (`Paris` → `Paris, TX`), so nothing is silent. The
+carrier form shows the same message under the HQ city field.
 
 ## City suggestions
 
 The HQ city, origin and destination inputs open a list of up to 5 cities while you type
 (`app/static/city-autocomplete.js`, a server-rendered list from `GET /admin/cities/suggest`):
 
-- Matching ignores case, dots and extra spaces (`orl`, `ORL`, `st. l`; a Turkish `İ` counts as `i`).
-  Names that start with the letters come first, then names with a later word that does (`lau` →
-  Fort **Lau**derdale). Letters in the middle of a word do not match, so `o` suggests Orlando, not Boston.
-- Catalog cities (`cities.csv` + aliases, alphabetical) come before cities found online (in
-  OpenRouteService's relevance order). The typed letters are bold; online ones carry an `ORS` tag.
-- Local first: the catalog and the `cities` table. OpenRouteService autocomplete
-  (`layers=locality`, US only: cities and towns, never districts, streets or venues) is asked only
-  when local matches fill fewer than 5 rows and at least 3 letters are typed. What it returns is
-  stored, so the same city comes from the database next time and needs no geocoding for a quote.
+- Names that **start** with the typed letters come first, the most populous first: `a` → Austin,
+  Albuquerque, Atlanta, Arlington, Aurora; `ams` → Amsterdam (NY). From 3 letters on, a later word
+  may also match, in the rows left over (`lauderdale` → … Fort **Lauderdale**). Joining words in lower
+  case (`at`, `by`, `the`) never match, and letters in the middle of a word never do.
+- Matching ignores case, dots, accents and extra spaces (`ORL`, `st. l`, `canon` → Cañon City; a
+  Turkish `İ` counts as `i`). `Orlando, f` also filters by state.
+- Shipped cities (catalog + `us_cities.csv`) come before towns found online (in OpenRouteService's
+  relevance order). The typed letters are bold; online ones carry an `ORS` tag.
+- OpenRouteService autocomplete (`layers=locality`, US only: cities and towns, never districts,
+  streets or venues) is asked **only when nothing local matches** and at least 3 letters are typed.
+  What it returns is stored, so the same town comes from the database next time.
 - Quota guards: 250 ms debounce with the older request aborted, each query sent once per process, a
   shorter query whose answer was complete covers longer ones, 3 s timeout, 60 s pause after a failure.
-- Up/Down move, Enter picks (an open list never submits the form), Escape closes. Picking is optional:
-  free text is validated exactly as before. If ORS is down or not configured, local cities are shown
-  with a note.
+- Up/Down move, Enter picks (an open list never submits the form), Escape closes. Picking is optional;
+  typed text goes through the same city check as everything else.
+
+`scripts/build_us_cities.py` rebuilds `us_cities.csv` from the two public files (~7 MB download).
 
 ## API
 
@@ -198,8 +260,9 @@ The HQ city, origin and destination inputs open a list of up to 5 cities while y
 | GET | `/api/v1/cities?q=orl&limit=5` | City suggestions `{"items": [{"name", "state", "source"}], "warnings": []}`; `limit` 1–10 |
 | GET | `/health` | Includes a database probe |
 
-Errors are `{"error": CODE, "detail": ...}`: `UNKNOWN_LOCATION`, `INVALID_ORDER`,
-`INVALID_CARRIER` (422), `INVALID_RULES` (500, e.g. a typo in `rules.yaml`). Unknown request fields
+Errors are `{"error": CODE, "detail": ...}`: `UNKNOWN_LOCATION` (with `problem` and `suggestions`,
+see [Cities](#cities)), `INVALID_ORDER`, `INVALID_CARRIER` (422; an unknown HQ city is a field error
+with a suggestion), `INVALID_RULES` (500, e.g. a typo in `rules.yaml`). Unknown request fields
 are rejected with 422, so a misspelled field is never silently ignored.
 
 ```bash
@@ -245,14 +308,14 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | Layer | What it checks | DB | Network | Jev |
 |---|---|---|---|---|
 | `tests/unit/selection` | The 7 case orders, inclusive limits (200/250/300), tie-breaks, ranking swap via config, rules validation, explanations | – | – | – |
-| `tests/unit/distance` | Normalization, case table, Haversine, chain order, city suggestion ranking, ORS client (httpx MockTransport) | – | – | – |
+| `tests/unit/distance` | Every case-table pair without a request, city resolution and "did you mean", table reload, suggestion ranking, the US city list and its build script, ORS client (httpx MockTransport) | – | – | – |
 | `tests/unit/services` | Confidence bands, hazardous asymmetry, order/carrier compatibility, Jev outage, batching, city suggestion quota guards | – | – | fake |
 | `tests/api` | REST endpoints and the admin screen over TestClient | fake | – | fake |
 | `tests/integration` | PostgreSQL repositories, CHECK constraints, the real app wiring | ✓ | – | – |
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 251 tests, no database/network/Jev, < 2 s
+make test        # 320 tests, no database/network/Jev, < 2 s
 make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API
@@ -329,7 +392,7 @@ also the closest in every tie-free case). Adding a carrier based in the origin c
 | `TYPESAFE_API_KEY` | – | Jev. Without it, free text asks for input and restrictive notes need review |
 | `JEV_MODEL` | SDK default `jev-latest` | Pin a version once thresholds are tuned |
 | `JEV_TIMEOUT_SECONDS` | `5` | Per request; one retry |
-| `ORS_API_KEY` | – | OpenRouteService; without it off-table routes use Haversine and city suggestions stay local |
+| `ORS_API_KEY` | – | OpenRouteService; without it off-table routes use Haversine, suggestions stay local and only shipped or stored cities are accepted |
 | `RULES_PATH` | `config/rules.yaml` | |
 
 ## Decisions
@@ -353,10 +416,12 @@ also the closest in every tie-free case). Adding a carrier based in the origin c
   information is not a conflict. Price-changing notes ("+20% over 500 miles") need a structured
   field, because Jev does not do arithmetic.
 - Order and carrier descriptions are sent to the Jev API; they should not contain confidential data.
-- City names are matched to the first entry in `cities.csv` (e.g. Portland is Portland, OR);
-  geocoding is limited to the US. Cities are known by name only, so the `cities` table keeps one row
-  per name (the first one found: Springfield, IL).
-- ORS's locality layer includes census-designated places, so `boca` also suggests communities next to
-  Boca Raton (Boca West, Boca Pointe). They are real places with coordinates and rank after the city.
+- US cities only. Cities are known by name, so a name means one city: the catalog's, else the most
+  populous (`Portland, ME` is refused with "this name is Portland, OR"). Supporting both would mean
+  name + state as the key of carriers, cached distances and the table.
+- `us_cities.csv` prefers a missing town to a wrong one: New Jersey townships and some New England
+  towns are not Census places, so they come from OpenRouteService when typed (one request, then stored).
+- ORS's locality layer includes census-designated places, so a town found online may be a community
+  next to a city (Boca West next to Boca Raton). They are real places with coordinates.
 - The distance cache never expires (road distances rarely change).
 - The admin screen has no authentication.

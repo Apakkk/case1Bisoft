@@ -1,8 +1,9 @@
 """City suggestions for the city inputs and GET /api/v1/cities: local first, OpenRouteService only when needed.
 
-Local = the shipped catalog (config/cities.csv + aliases) and the `cities` table. ORS autocomplete is asked
-only when local matches fill fewer than `limit` rows; whatever it returns is stored, so the next time the
-same city comes from the database. ORS has a daily quota, hence the guards in `_worth_asking`.
+Local = the shipped cities (catalog + aliases, and ~5,100 US cities with 5,000+ people) and the `cities`
+table. ORS autocomplete is asked only when nothing local matches (a small town); whatever it returns is
+stored, so the next time the same city comes from the database. ORS has a daily quota, hence the guards in
+`_worth_asking`.
 """
 
 import logging
@@ -52,7 +53,7 @@ class CityService:
         stored = self._stored(key)
         entries = [*self._directory.entries(), *self._entries(stored)]
         ranked = rank_suggestions(query, entries, limit)
-        if len(ranked) >= limit or not self._worth_asking(key):
+        if ranked or not self._worth_asking(key):
             return CitySuggestions(ranked)
         if self._places is None:
             return CitySuggestions(ranked, (ONLINE_DISABLED,))

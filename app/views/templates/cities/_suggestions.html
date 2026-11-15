@@ -10,7 +10,7 @@
 </li>
 {%- endfor %}
 {%- if not result.items %}
-<li class="city-note" role="presentation">Öneri yok — yazdığınız şehir yine de kullanılabilir.</li>
+<li class="city-note" role="presentation">Eşleşen ABD şehri yok (yalnızca ABD şehirleri destekleniyor).</li>
 {%- endif %}
 {%- for warning in result.warnings %}
 <li class="city-note warn" role="presentation">{{ warning }}</li>

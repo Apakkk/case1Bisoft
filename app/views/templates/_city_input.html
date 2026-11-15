@@ -1,5 +1,5 @@
 {# City input with a suggestion list (static/city-autocomplete.js + GET /admin/cities/suggest).
-   Picking from the list is optional: free text is validated by the services as before. #}
+   Picking from the list is optional: typed text goes through the same city check (unknown -> "did you mean"). #}
 {% macro city_input(name, label, value="", error=None) %}
 <div class="city-field">
   <label for="{{ name }}-city">{{ label }}</label>

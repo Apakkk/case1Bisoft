@@ -13,8 +13,9 @@
     <header>
       <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
       {% if q.carrier %}<strong>{{ q.carrier }}</strong> · {{ q.total_cost | money }}{% endif %}
+      <span class="muted">· {{ q.order.origin | place(q.order.origin_state) }} → {{ q.order.destination | place(q.order.destination_state) }}</span>
       {% if q.distance %}
-        <span class="muted">· {{ q.distance.miles | miles }} mil ({{ q.distance.source }}{% if q.distance.approximate %}, yaklaşık{% endif %})</span>
+        <span class="muted">· {{ q.distance.miles | miles }} mil ({{ q.distance.source | distance_source }}{% if q.distance.approximate %}, yaklaşık{% endif %})</span>
       {% endif %}
     </header>
 
@@ -32,7 +33,7 @@
         <tbody>
         {% for r in q.ranking %}
           <tr><td>{{ loop.index }}</td><td>{{ r.carrier }}{% if r.requested %} <span class="badge info">istenen</span>{% endif %}</td><td>{{ r.total_cost | money }}</td>
-              <td>{% if r.hq_distance_miles is not none %}{{ r.hq_distance_miles | miles }} mil{% else %}—{% endif %}</td></tr>
+              <td>{% if r.hq_distance_miles is not none %}{{ r.hq_distance_miles | miles }} mil <span class="muted">({{ r.hq_distance_source | distance_source }})</span>{% else %}—{% endif %}</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -60,7 +61,7 @@
 
     <details>
       <summary class="muted">Yorumlanan sipariş</summary>
-      <p class="muted">{{ q.order.origin }} → {{ q.order.destination }} ·
+      <p class="muted">{{ q.order.origin | place(q.order.origin_state) }} → {{ q.order.destination | place(q.order.destination_state) }} ·
         {{ q.order.container_size or "?" }} ft · {{ q.order.cargo_type or "?" }}
         {% if q.order.inferred %}· çıkarılan: {% for k, v in q.order.inferred.items() %}{{ k }} ({{ v }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
       </p>

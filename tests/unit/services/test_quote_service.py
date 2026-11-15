@@ -110,3 +110,21 @@ def test_unknown_hq_city_is_ranked_last_with_a_warning() -> None:
 
     assert [c.carrier.name for c in quote.ranking] == ["B-Logistics", "M-Logistics", "Z-Logistics"]
     assert any("Z-Logistics merkezi (Nowhere) bulunamadı" in w for w in quote.warnings)
+
+
+def test_an_approximate_hq_distance_says_so_and_keeps_its_source() -> None:
+    # Miami -> Orlando is in the table; S's HQ (Tampa) -> Miami is not, and there is no routing service here.
+    quote = service().quote(request("Miami", "Orlando", 40, "Dry"))
+
+    assert quote.distance is not None and quote.distance.source is DistanceSource.CASE_TABLE
+    assert quote.hq_distances["S-Logistics"].source is DistanceSource.HAVERSINE
+    assert quote.hq_distances["M-Logistics"].source is DistanceSource.CASE_TABLE  # Houston - Miami: 1190
+    assert "S-Logistics merkezi (Tampa) → Miami mesafesi yaklaşık: kuş uçuşu × 1.2." in quote.warnings
+    assert quote.status is QuoteStatus.SELECTED  # ranking data only: no review needed
+
+
+def test_cities_are_resolved_with_their_state() -> None:
+    quote = service().quote(request("miami, florida", "ATLANTA", 20, "Reefer"))
+
+    assert (quote.order.origin, quote.order.origin_state) == ("Miami", "FL")
+    assert (quote.order.destination, quote.order.destination_state) == ("Atlanta", "GA")

@@ -71,7 +71,7 @@ def _save(
     except ValidationError as error:
         return _form(request, rules, form, carrier_id, form_errors(error))
     except CarrierValidationError as error:
-        return _form(request, rules, form, carrier_id, error.errors)
+        return _form(request, rules, form, carrier_id, error.screen_errors)
     except DuplicateCarrierError:
         return _form(request, rules, form, carrier_id, {"name": "Bu isimde bir firma zaten var."})
     except InvalidCarrierError as error:

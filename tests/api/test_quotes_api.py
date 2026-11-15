@@ -11,7 +11,7 @@ from app.selection.rules import RulesError
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, CASE_ORDERS, CaseOrder, default_rules
-from tests.fakes import InMemoryCarrierRepository, StaticRules, offline_distances
+from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, offline_distances
 
 
 @pytest.fixture
@@ -50,9 +50,22 @@ def test_response_shape_for_the_tie_case(client: TestClient) -> None:
     assert data["currency"] == "USD"
     assert data["distance"] == {"miles": "660", "source": "case_table", "approximate": False}
     assert data["ranking"] == [
-        {"carrier": "B-Logistics", "total_cost": "660.00", "hq_distance_miles": "30", "requested": False},
-        {"carrier": "M-Logistics", "total_cost": "660.00", "hq_distance_miles": "1190", "requested": False},
+        {
+            "carrier": "B-Logistics",
+            "total_cost": "660.00",
+            "hq_distance_miles": "30",
+            "hq_distance_source": "case_table",
+            "requested": False,
+        },
+        {
+            "carrier": "M-Logistics",
+            "total_cost": "660.00",
+            "hq_distance_miles": "1190",
+            "hq_distance_source": "case_table",
+            "requested": False,
+        },
     ]
+    assert (data["order"]["origin_state"], data["order"]["destination_state"]) == ("FL", "GA")
     assert data["requested_carrier"] is None
     assert {r["carrier"] for r in data["rejected"]} == {"S-Logistics", "A-Logistics"}
     assert data["jev_calls"] == []
@@ -72,6 +85,44 @@ def test_bad_orders_are_422_with_an_error_code(client: TestClient, body: dict[st
 
     assert response.status_code == 422
     assert response.json()["error"] == code
+
+
+def test_a_typo_in_a_city_is_422_with_suggestions_and_costs_no_jev_tokens() -> None:
+    app, jev = create_app(), FakeJev()
+    repo, rules = InMemoryCarrierRepository(CASE_CARRIERS), StaticRules(default_rules())
+    app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), rules, jev)
+    body = {"origin": "Tamap", "destination": "Miami", "description": "40'lık kuru yük"}  # would ask Jev
+
+    response = TestClient(app).post("/api/v1/quotes", json=body)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": "UNKNOWN_LOCATION",
+        "detail": "location not in the known cities and the map service could not confirm it: Tamap "
+        "(did you mean: Tampa, FL?)",
+        "city": "Tamap",
+        "problem": "unverified",
+        "suggestions": [{"name": "Tampa", "state": "FL"}],
+    }
+    assert jev.calls == []
+
+
+def test_a_city_outside_the_us_is_refused(client: TestClient) -> None:
+    body = {"origin": "Miami", "destination": "Amsterdam, Netherlands", "container_size": 20, "cargo_type": "Dry"}
+
+    data = client.post("/api/v1/quotes", json=body).json()
+
+    assert (data["error"], data["problem"]) == ("UNKNOWN_LOCATION", "outside_us")
+    assert data["suggestions"] == [{"name": "Amsterdam", "state": "NY"}]
+
+
+def test_a_shipped_us_city_is_quoted_and_shown_with_its_state(client: TestClient) -> None:
+    body = {"origin": "Miami", "destination": "paris", "container_size": 20, "cargo_type": "Dry"}
+
+    data = client.post("/api/v1/quotes", json=body).json()
+
+    assert (data["order"]["destination"], data["order"]["destination_state"]) == ("Paris", "TX")
+    assert data["distance"]["source"] == "haversine"  # no routing service in this test
 
 
 def test_schema_violations_are_422(client: TestClient) -> None:

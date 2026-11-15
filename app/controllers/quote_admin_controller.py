@@ -49,7 +49,7 @@ def run_quote(
     except InvalidOrderError as error:
         return _error(request, "INVALID_ORDER", str(error))
     except UnknownLocationError as error:
-        return _error(request, "UNKNOWN_LOCATION", f"Konum bulunamadı: {error.city}")
+        return _error(request, "UNKNOWN_LOCATION", error.message)
     return templates.TemplateResponse(request, "quote/_result.html", {"q": quote, "error": None})
 
 

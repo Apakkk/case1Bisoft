@@ -1,6 +1,6 @@
 """Carrier CRUD shared by the JSON API and the admin screen: one place for validation."""
 
-from app.clients.distance.chain import DistanceProvider
+from app.clients.distance.chain import DistanceProvider, UnknownLocationError
 from app.clients.jev_client import JevClient, JevUnavailableError
 from app.models.carrier import Carrier, NoteStatus
 from app.repositories.carrier_repository import CarrierRepository
@@ -15,9 +15,12 @@ class CarrierNotFoundError(LookupError):
 
 
 class CarrierValidationError(ValueError):
-    def __init__(self, errors: dict[str, str]) -> None:
+    """`errors`: field -> English message (API). `screen_errors`: the same with Turkish where there is one."""
+
+    def __init__(self, errors: dict[str, str], turkish: dict[str, str] | None = None) -> None:
         super().__init__("; ".join(f"{k}: {v}" for k, v in errors.items()))
         self.errors = errors
+        self.screen_errors = {**errors, **(turkish or {})}
 
 
 class CarrierService:
@@ -75,13 +78,21 @@ class CarrierService:
             else:
                 cargo_types.add(canonical)
 
+        # Before the note pre-check: an unknown city must not cost Jev tokens.
+        turkish: dict[str, str] = {}
+        hq_city = data.hq_city
+        try:
+            hq_city = self._distances.normalize(data.hq_city)
+        except UnknownLocationError as error:
+            errors["hq_city"], turkish["hq_city"] = error.detail, error.message
+
         if errors:
-            raise CarrierValidationError(errors)
+            raise CarrierValidationError(errors, turkish)
 
         note_status, note_confidence = self._note_status(data.description, existing)
         return Carrier(
             name=data.name,
-            hq_city=self._distances.normalize(data.hq_city),
+            hq_city=hq_city,
             min_miles=data.min_miles,
             max_miles=data.max_miles,
             container_sizes=frozenset(data.container_sizes),

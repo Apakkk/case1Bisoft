@@ -8,7 +8,7 @@ from app.main import create_app
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, default_rules
-from tests.fakes import InMemoryCarrierRepository, StaticRules, offline_distances
+from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, offline_distances
 
 NEW = {
     "name": "K-Logistics",
@@ -90,6 +90,28 @@ def test_catalog_violations_are_422_per_field(client: TestClient, change: dict[s
 )
 def test_schema_violations_are_422(client: TestClient, change: dict[str, object]) -> None:
     assert client.post("/api/v1/carriers", json={**NEW, **change}).status_code == 422
+
+
+def test_an_unknown_hq_city_is_refused_with_a_suggestion_before_jev_is_asked() -> None:
+    app, jev = create_app(), FakeJev(restriction=0.9)
+    repo, rules = InMemoryCarrierRepository(CASE_CARRIERS), StaticRules(default_rules())
+    app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, offline_distances(), rules, jev)
+    body = {**NEW, "hq_city": "Jacksonvile", "description": "Only ports"}
+
+    response = TestClient(app).post("/api/v1/carriers", json=body)
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert set(detail) == {"hq_city"}
+    assert "Jacksonvile" in detail["hq_city"] and "did you mean: Jacksonville, FL" in detail["hq_city"]
+    assert jev.calls == []  # the note pre-check would have cost tokens
+    assert len(repo.list()) == 4
+
+
+def test_a_shipped_us_city_is_a_valid_hq(client: TestClient) -> None:
+    created = client.post("/api/v1/carriers", json={**NEW, "hq_city": "AMARILLO, tx"})
+
+    assert (created.status_code, created.json()["hq_city"]) == (201, "Amarillo")
 
 
 def test_unknown_carrier_is_404(client: TestClient) -> None:

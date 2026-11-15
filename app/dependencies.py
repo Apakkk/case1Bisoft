@@ -8,7 +8,7 @@ from fastapi import Request
 from app.clients.distance.chain import DistanceProvider
 from app.clients.distance.cities import CityDirectory, load_city_directory
 from app.clients.distance.ors import OrsClient
-from app.clients.distance.static_table import StaticDistanceTable, load_static_table
+from app.clients.distance.static_table import FileDistanceTable, load_static_table
 from app.clients.jev_client import JevClient, TypesafeJevClient
 from app.config import Settings
 from app.db import Pool
@@ -36,10 +36,16 @@ def build_ors_client(settings: Settings) -> OrsClient | None:
     return OrsClient(settings.ors_api_key.get_secret_value()) if settings.ors_api_key else None
 
 
-def load_distance_config(config_dir: Path) -> tuple[StaticDistanceTable, CityDirectory]:
-    table = load_static_table(config_dir / "distances.yaml")
-    cities = load_city_directory(config_dir / "cities.csv", config_dir / "city_aliases.yaml", table.city_names())
-    return table, cities
+def load_distance_config(config_dir: Path) -> tuple[FileDistanceTable, CityDirectory]:
+    """The case table (re-read when edited) and every known US city (catalog first, then us_cities.csv)."""
+    table_path = config_dir / "distances.yaml"
+    cities = load_city_directory(
+        config_dir / "cities.csv",
+        config_dir / "city_aliases.yaml",
+        load_static_table(table_path).city_names(),
+        config_dir / "us_cities.csv",
+    )
+    return FileDistanceTable(table_path, cities.lookup), cities
 
 
 def build_jev_client(settings: Settings) -> JevClient | None:

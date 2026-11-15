@@ -5,6 +5,7 @@ the order's description (missing fields, requirements) and the carriers' descrip
 never becomes a guess: it becomes `needs_review` or `needs_input`.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -49,6 +50,7 @@ class Quote:
     warnings: tuple[str, ...]
     explanation: str
     requested: str | None = None  # carrier the order description asks for (Jev), if any
+    hq_distances: Mapping[str, DistanceResult] = field(default_factory=dict)  # carrier -> HQ to origin
 
 
 @dataclass
@@ -94,8 +96,13 @@ class QuoteService:
         filtered = filter_carriers(carriers, order, distance.miles, rules)
 
         candidates = filtered.eligible
+        hq_distances: dict[str, DistanceResult] = {}
         if len(candidates) > 1 and needs_hq_distance(rules):  # a single candidate needs no tie-break
-            hq = {c.carrier.name: self._hq_distance(c.carrier, order.origin, rules, trace) for c in candidates}
+            for c in candidates:
+                hq_result = self._hq_distance(c.carrier, order.origin, rules, trace)
+                if hq_result is not None:
+                    hq_distances[c.carrier.name] = hq_result
+            hq = {c.carrier.name: _miles_of(hq_distances.get(c.carrier.name)) for c in candidates}
             candidates = with_hq_distances(candidates, hq)
         notes = _notes_to_check(order_note, candidates)
         check = self._ask_compatibility(order, order_note, notes, carriers, rules, trace)
@@ -128,6 +135,7 @@ class QuoteService:
             warnings=tuple(trace.warnings),
             explanation=explain(outcome, rules),
             requested=requested,
+            hq_distances=hq_distances,
         )
 
     # --- order interpretation -------------------------------------------------------------
@@ -136,6 +144,9 @@ class QuoteService:
         text = (request.description or "").strip()
         if (request.container_size is None or request.cargo_type is None) and not text:
             raise InvalidOrderError("send container_size and cargo_type, or describe the cargo in description")
+        # Cities first: an unknown one fails here (with suggestions), before any Jev tokens are spent.
+        origin = self._distances.normalize(request.origin)
+        destination = self._distances.normalize(request.destination)
 
         inferred: dict[str, str] = {}
         size = request.container_size
@@ -165,8 +176,10 @@ class QuoteService:
                 cargo, inferred["cargo_type"] = jev_cargo, "jev"
 
         return ResolvedOrder(
-            origin=self._distances.normalize(request.origin),
-            destination=self._distances.normalize(request.destination),
+            origin=origin,
+            destination=destination,
+            origin_state=self._distances.state_of(origin),
+            destination_state=self._distances.state_of(destination),
             container_size=size,
             cargo_type=cargo,
             inferred=inferred,
@@ -331,16 +344,25 @@ class QuoteService:
             trace.flag(f"{message}; manuel onay gerekli.")
         return tuple(remaining), tuple(rejections)
 
-    def _hq_distance(self, carrier: Carrier, origin: str, rules: RuleSet, trace: _Trace) -> Decimal | None:
+    def _hq_distance(self, carrier: Carrier, origin: str, rules: RuleSet, trace: _Trace) -> DistanceResult | None:
+        factor = rules.distance.approximate_factor
         try:
-            return self._distances.miles(
-                carrier.hq_city, origin, approximate_factor=rules.distance.approximate_factor
-            ).miles
+            result = self._distances.miles(carrier.hq_city, origin, approximate_factor=factor)
         except UnknownLocationError:
             trace.warnings.append(
                 f"{carrier.name} merkezi ({carrier.hq_city}) bulunamadı; yakınlık kriterinde sona alındı."
             )
             return None
+        if result.approximate:
+            trace.warnings.append(
+                f"{carrier.name} merkezi ({carrier.hq_city}) → {origin} mesafesi yaklaşık: kuş uçuşu × {factor}."
+            )
+        trace.warnings.extend(w for w in result.warnings if w not in trace.warnings)
+        return result
+
+
+def _miles_of(result: DistanceResult | None) -> Decimal | None:
+    return result.miles if result is not None else None
 
 
 def _notes_to_check(order_note: str, candidates: tuple[Candidate, ...]) -> dict[str, str]:

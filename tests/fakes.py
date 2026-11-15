@@ -1,14 +1,15 @@
 """In-memory fakes injected instead of PostgreSQL, OpenRouteService and Jev (no mock patching)."""
 
+import functools
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 from app.clients.distance.chain import DistanceProvider
-from app.clients.distance.cities import Coordinates, city_key, load_city_directory, match_tier
+from app.clients.distance.cities import CityDirectory, Coordinates, city_key, match_tier
 from app.clients.distance.ors import RoutingError
-from app.clients.distance.static_table import load_static_table
+from app.clients.distance.static_table import FileDistanceTable
 from app.clients.jev_client import (
     NO_REQUEST,
     ChoiceResult,
@@ -17,6 +18,7 @@ from app.clients.jev_client import (
     NotePrecheck,
     OrderClassification,
 )
+from app.dependencies import load_distance_config
 from app.models.carrier import Carrier
 from app.models.city import City
 from app.models.order import Order
@@ -36,26 +38,29 @@ class InMemoryDistanceCache:
 
 
 class FakeRouting:
-    """Scripted routing client that records calls; `fail=True` simulates an outage."""
+    """Scripted routing client that records calls; `fail=True` simulates an outage.
+
+    `places`: what geocoding returns for a text, in ORS order (look-alikes included, like Pelias).
+    """
 
     def __init__(
         self,
         *,
         miles: Decimal = Decimal("100.0"),
-        geocodes: dict[str, Coordinates] | None = None,
+        places: dict[str, list[City]] | None = None,
         fail: bool = False,
     ) -> None:
         self.miles = miles
-        self.geocodes = geocodes or {}
+        self.places = places or {}
         self.fail = fail
         self.route_calls: list[tuple[Coordinates, Coordinates]] = []
         self.geocode_calls: list[str] = []
 
-    def geocode(self, city: str) -> Coordinates | None:
-        self.geocode_calls.append(city)
+    def geocode(self, text: str) -> list[City]:
+        self.geocode_calls.append(text)
         if self.fail:
             raise RoutingError("simulated outage")
-        return self.geocodes.get(city)
+        return list(self.places.get(text, []))
 
     def driving_miles(self, origin: Coordinates, destination: Coordinates) -> Decimal:
         self.route_calls.append((origin, destination))
@@ -158,9 +163,14 @@ def offline_distances(
     cache: InMemoryDistanceCache | None = None, routing: FakeRouting | None = None
 ) -> DistanceProvider:
     """The real distance chain over the shipped config files, with no database and no network."""
-    table = load_static_table(Path("config/distances.yaml"))
-    cities = load_city_directory(Path("config/cities.csv"), Path("config/city_aliases.yaml"), table.city_names())
+    table, cities = shipped_distance_config()
     return DistanceProvider(cities, table, cache, routing)
+
+
+@functools.cache
+def shipped_distance_config() -> tuple[FileDistanceTable, CityDirectory]:
+    """config/ loaded once per test run (~5,100 US cities); every provider still starts with its own memory."""
+    return load_distance_config(Path("config"))
 
 
 def choice(label: str, confidence: float, **probabilities: float) -> ChoiceResult:

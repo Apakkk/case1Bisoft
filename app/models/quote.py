@@ -29,3 +29,5 @@ class ResolvedOrder:
     container_size: int | None
     cargo_type: str | None
     inferred: dict[str, str] = field(default_factory=dict)  # field -> "text" (regex) | "jev"
+    origin_state: str = ""  # two-letter US state, shown next to the city ('Paris' -> 'Paris, TX')
+    destination_state: str = ""

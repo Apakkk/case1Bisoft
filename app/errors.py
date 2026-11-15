@@ -17,7 +17,10 @@ def _error(status_code: int, code: str, detail: object, **extra: object) -> JSON
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(UnknownLocationError)
     async def unknown_location(_: Request, exc: UnknownLocationError) -> JSONResponse:
-        return _error(422, "UNKNOWN_LOCATION", f"location not found: {exc.city}", city=exc.city)
+        suggestions = [{"name": place.name, "state": place.state} for place in exc.suggestions]
+        return _error(
+            422, "UNKNOWN_LOCATION", exc.detail, city=exc.city, problem=exc.problem.value, suggestions=suggestions
+        )
 
     @app.exception_handler(InvalidOrderError)
     async def invalid_order(_: Request, exc: InvalidOrderError) -> JSONResponse:

@@ -15,13 +15,13 @@
     {{ city_input("destination", "Varış", "Atlanta") }}
     <label>Konteyner
       <select name="container_size">
-        <option value="">— açıklamadan —</option>
+        <option value="">— seçilmedi —</option>
         {% for size in catalog.container_sizes %}<option value="{{ size }}" {% if size == 20 %}selected{% endif %}>{{ size }} ft</option>{% endfor %}
       </select>
     </label>
     <label>Yük tipi
       <select name="cargo_type">
-        <option value="">— açıklamadan —</option>
+        <option value="">— seçilmedi —</option>
         {% for cargo in catalog.cargo_types %}<option value="{{ cargo }}" {% if cargo == "Reefer" %}selected{% endif %}>{{ cargo }}</option>{% endfor %}
       </select>
     </label>

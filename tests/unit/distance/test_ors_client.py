@@ -29,19 +29,29 @@ def test_driving_distance_is_converted_from_meters_to_miles() -> None:
     assert seen["body"] == {"coordinates": [[-80.1918, 25.7617], [-80.1373, 26.1224]]}  # [lon, lat]
 
 
-def test_geocode_returns_lat_lon() -> None:
+def test_geocode_returns_us_localities_in_ors_order() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
-        assert request.url.params["text"] == "Ocala"
-        return httpx.Response(200, json={"features": [{"geometry": {"coordinates": [-82.1401, 29.1872]}}]})
+        params = request.url.params
+        assert (params["text"], params["boundary.country"], params["layers"], params["size"]) == (
+            "Marfa",
+            "US",
+            "locality",
+            "5",
+        )
+        features = [feature("City of Marfa", "TX", -104.0206, 30.3094), feature("Marfa Lights", "TX", -103.9, 30.3)]
+        return httpx.Response(200, json={"features": features})
 
-    assert client(httpx.MockTransport(handle)).geocode("Ocala") == (29.1872, -82.1401)
+    assert client(httpx.MockTransport(handle)).geocode("Marfa") == [
+        City("Marfa", "TX", 30.3094, -104.0206),
+        City("Marfa Lights", "TX", 30.3, -103.9),
+    ]
 
 
-def test_geocode_without_match_returns_none() -> None:
+def test_geocode_without_match_returns_nothing() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"features": []})
 
-    assert client(httpx.MockTransport(handle)).geocode("Atlantis") is None
+    assert client(httpx.MockTransport(handle)).geocode("Atlantis") == []
 
 
 @pytest.mark.parametrize("status", [401, 403, 429, 500])

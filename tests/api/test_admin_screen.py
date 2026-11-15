@@ -154,9 +154,35 @@ def test_quote_form_sends_the_order_description_to_the_compatibility_check(scree
     assert "Sipariş açıklamasıyla uyumsuz" in html and "compatibility" in html
 
 
-def test_quote_form_reports_unknown_cities(screen: Screen) -> None:
-    order = {"origin": "Atlantis", "destination": "Miami", "container_size": "20", "cargo_type": "Dry"}
+def test_quote_form_reports_unknown_cities_with_a_suggestion(screen: Screen) -> None:
+    order = {"origin": "Orlndo", "destination": "Miami", "container_size": "20", "cargo_type": "Dry"}
 
     html = screen.client.post("/admin/quote", data=order).text
 
-    assert "UNKNOWN_LOCATION" in html and "Atlantis" in html
+    assert "UNKNOWN_LOCATION" in html
+    assert "Bunu mu demek istediniz: Orlando, FL" in html
+
+
+def test_quote_form_refuses_a_city_outside_the_us_in_turkish(screen: Screen) -> None:
+    order = {"origin": "Miami", "destination": "Amsterdam, Netherlands", "container_size": "20", "cargo_type": "Dry"}
+
+    html = screen.client.post("/admin/quote", data=order).text
+
+    assert "Yalnızca ABD şehirleri destekleniyor" in html and "Amsterdam, NY" in html
+
+
+def test_quote_result_shows_states_and_where_each_distance_came_from(screen: Screen) -> None:
+    order = {"origin": "Miami", "destination": "Atlanta", "container_size": "20", "cargo_type": "Reefer"}
+
+    html = screen.client.post("/admin/quote", data=order).text
+
+    assert "Miami, FL → Atlanta, GA" in html
+    assert "660 mil (case tablosu)" in html
+    assert html.count("(case tablosu)") == 3  # the order, and both HQ distances in the ranking
+
+
+def test_an_unknown_hq_city_is_a_turkish_field_error_with_a_suggestion(screen: Screen) -> None:
+    html = screen.client.post("/admin/carriers", data={**VALID, "hq_city": "Tamap"}).text
+
+    assert "Tamap" in html and "Bunu mu demek istediniz: Tampa, FL?" in html
+    assert screen.jev.calls == []

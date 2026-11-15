@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.quote import QuoteStatus
 
 if TYPE_CHECKING:
+    from app.clients.distance.chain import DistanceResult
     from app.services.quote_service import Quote
 
 
@@ -45,13 +46,15 @@ class QuoteRequest(BaseModel):
 
 class DistanceOut(BaseModel):
     miles: Decimal
-    source: str
+    source: str = Field(description="same_city | case_table | cache (earlier ORS answer) | ors | haversine")
     approximate: bool
 
 
 class OrderOut(BaseModel):
     origin: str
     destination: str
+    origin_state: str = Field(description="US state code of the resolved origin ('' if unknown)")
+    destination_state: str = Field(description="US state code of the resolved destination ('' if unknown)")
     container_size: int | None
     cargo_type: str | None
     inferred: dict[str, str] = Field(description="Fields not sent explicitly: 'text' (parsed) or 'jev'")
@@ -61,6 +64,7 @@ class RankedCarrierOut(BaseModel):
     carrier: str
     total_cost: Decimal
     hq_distance_miles: Decimal | None
+    hq_distance_source: str | None = Field(description="Where hq_distance_miles came from (see distance.source)")
     requested: bool = Field(description="The order description asks for this carrier")
 
 
@@ -103,6 +107,8 @@ class QuoteResponse(BaseModel):
             order=OrderOut(
                 origin=o.origin,
                 destination=o.destination,
+                origin_state=o.origin_state,
+                destination_state=o.destination_state,
                 container_size=o.container_size,
                 cargo_type=o.cargo_type,
                 inferred=o.inferred,
@@ -112,6 +118,7 @@ class QuoteResponse(BaseModel):
                     carrier=c.carrier.name,
                     total_cost=c.total_cost,
                     hq_distance_miles=c.hq_distance,
+                    hq_distance_source=_source(quote.hq_distances.get(c.carrier.name)),
                     requested=c.requested,
                 )
                 for c in quote.ranking
@@ -126,3 +133,7 @@ class QuoteResponse(BaseModel):
             warnings=list(quote.warnings),
             explanation=quote.explanation,
         )
+
+
+def _source(result: DistanceResult | None) -> str | None:
+    return result.source.value if result is not None else None

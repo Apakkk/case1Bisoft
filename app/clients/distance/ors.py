@@ -13,6 +13,7 @@ METERS_PER_MILE = Decimal("1609.344")
 BASE_URL = "https://api.openrouteservice.org"
 AUTOCOMPLETE_PAGE_SIZE = 10  # ORS/Pelias returns at most this many; fewer means the list is complete
 AUTOCOMPLETE_TIMEOUT_SECONDS = 3.0  # suggestions are only useful while the user is still typing
+GEOCODE_CANDIDATES = 5  # the exact name may not be the first hit; the caller picks it (same cost as 1)
 _OFFICIAL_PREFIX = re.compile(r"^(?:city|town|village|borough) of\s+", re.IGNORECASE)  # 'City of Boca Raton'
 
 
@@ -21,7 +22,7 @@ class RoutingError(Exception):
 
 
 class RoutingClient(Protocol):
-    def geocode(self, city: str) -> Coordinates | None: ...
+    def geocode(self, text: str) -> list[City]: ...
     def driving_miles(self, origin: Coordinates, destination: Coordinates) -> Decimal: ...
 
 
@@ -34,17 +35,14 @@ class OrsClient:
         self._http = http or httpx.Client(base_url=BASE_URL, timeout=10.0)
         self._headers = {"Authorization": api_key}
 
-    def geocode(self, city: str) -> Coordinates | None:
-        data = self._request(
-            "GET",
-            "/geocode/search",
-            params={"text": city, "boundary.country": "US", "layers": "locality", "size": 1},
-        )
-        features = data.get("features") or []
-        if not features:
-            return None
-        lon, lat = features[0]["geometry"]["coordinates"][:2]
-        return (float(lat), float(lon))
+    def geocode(self, text: str) -> list[City]:
+        """US cities and towns for `text` ('McAllen', 'Smalltown, KS'), best match first.
+
+        Pelias also returns look-alikes ('Tamap' may bring back some other place), so the caller accepts a
+        result only if its name is the one typed.
+        """
+        params = {"text": text, "boundary.country": "US", "layers": "locality", "size": GEOCODE_CANDIDATES}
+        return _cities(self._request("GET", "/geocode/search", params=params))
 
     def autocomplete(self, text: str) -> list[City]:
         """US cities and towns whose name starts like `text` (layers=locality: no districts, streets or venues)."""
@@ -54,19 +52,7 @@ class OrsClient:
             params={"text": text, "boundary.country": "US", "layers": "locality"},
             timeout=AUTOCOMPLETE_TIMEOUT_SECONDS,
         )
-        cities = []
-        for feature in data.get("features") or []:
-            try:
-                properties = feature["properties"]
-                lon, lat = feature["geometry"]["coordinates"][:2]
-                name = _OFFICIAL_PREFIX.sub("", str(properties["name"]).strip())
-                state = str(properties.get("region_a") or "").strip()
-                city = City(name=name, state=state, lat=float(lat), lon=float(lon))
-            except (KeyError, IndexError, TypeError, ValueError):
-                continue  # skip a malformed feature instead of losing the whole list
-            if name:
-                cities.append(city)
-        return cities
+        return _cities(data)
 
     def driving_miles(self, origin: Coordinates, destination: Coordinates) -> Decimal:
         # ORS expects [lon, lat] pairs.
@@ -88,3 +74,20 @@ class OrsClient:
         if not isinstance(data, dict):
             raise RoutingError("unexpected ORS response shape")
         return data
+
+
+def _cities(data: dict[str, Any]) -> list[City]:
+    """Parse geocoding features; a malformed one is skipped instead of losing the whole list."""
+    cities = []
+    for feature in data.get("features") or []:
+        try:
+            properties = feature["properties"]
+            lon, lat = feature["geometry"]["coordinates"][:2]
+            name = _OFFICIAL_PREFIX.sub("", str(properties["name"]).strip())
+            state = str(properties.get("region_a") or "").strip()
+            city = City(name=name, state=state, lat=float(lat), lon=float(lon))
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if name:
+            cities.append(city)
+    return cities

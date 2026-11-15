@@ -1,4 +1,4 @@
-"""CityService with fakes: local first, ORS only when needed (quota guards), found cities are stored."""
+"""CityService with fakes: local first, ORS only when nothing local matches (quota guards), found cities stored."""
 
 from pathlib import Path
 
@@ -11,10 +11,12 @@ from app.services.city_service import (
     OUTAGE_PAUSE_SECONDS,
     CityService,
 )
-from tests.fakes import FakePlaces, InMemoryCityRepository
+from tests.fakes import FakePlaces, InMemoryCityRepository, shipped_distance_config
 
 TABLE = load_static_table(Path("config/distances.yaml"))
+# The case catalog alone keeps these tests about the ORS rules small; one test uses every shipped city.
 DIRECTORY = load_city_directory(Path("config/cities.csv"), Path("config/city_aliases.yaml"), TABLE.city_names())
+SHIPPED = shipped_distance_config()[1]
 
 ORLANDO = City("Orlando", "FL", 28.5383, -81.3792)
 ORLAND = City("Orland", "CA", 39.7474, -122.1964)
@@ -42,37 +44,45 @@ def names(result: object) -> list[str]:
 
 
 def test_one_or_two_letters_never_reach_ors() -> None:
-    places = FakePlaces([ORLAND])
+    places = FakePlaces([City("Qq Town", "TX", 30.0, -97.0)])
 
-    assert names(service(places).suggest("o")) == ["Oklahoma City", "Orlando", "New Orleans"]
-    assert names(service(places).suggest("or")) == ["Orlando", "New Orleans"]
+    assert names(service(places).suggest("o")) == ["Oklahoma City", "Orlando"]
+    assert names(service(places).suggest("qq")) == []
     assert places.calls == []
 
 
-def test_five_local_matches_mean_no_ors_request() -> None:
-    stored = [ORLAND, ORLAND_PARK, City("Orlinda", "TN", 36.6, -86.7), City("Orleans", "MA", 41.8, -69.9)]
-    places = FakePlaces([BOCA])
+def test_any_local_match_means_no_ors_request() -> None:
+    places = FakePlaces([ORLAND, ORLAND_PARK])
 
-    result = service(places, InMemoryCityRepository(stored)).suggest("orl")
+    result = service(places, InMemoryCityRepository([ORLAND])).suggest("orl")
 
-    assert names(result) == ["Orlando", "Orland", "Orland Park", "Orlinda", "Orleans"]  # stored = ORS order
+    assert names(result) == ["Orlando", "Orland", "New Orleans"]  # catalog, stored, then a later word
     assert places.calls == []
 
 
-def test_too_few_local_matches_ask_ors_and_store_what_it_finds() -> None:
-    places, repo = FakePlaces([ORLANDO, ORLAND, ORLAND_PARK]), InMemoryCityRepository()
+def test_shipped_us_cities_answer_without_ors() -> None:
+    places = FakePlaces([City("Amsterdam", "NY", 42.9, -74.2)])
+    cities = CityService(SHIPPED, InMemoryCityRepository(), places, clock=Clock())
 
-    result = service(places, repo).suggest("Orl")
+    assert names(cities.suggest("a")) == ["Austin", "Albuquerque", "Atlanta", "Arlington", "Aurora"]
+    assert names(cities.suggest("ams")) == ["Amsterdam"]
+    assert names(cities.suggest("miami")) == ["Miami", "Miami Gardens", "Miami Beach", "Miami Lakes", "Miamisburg"]
+    assert places.calls == []
+
+
+def test_no_local_match_asks_ors_and_stores_what_it_finds() -> None:
+    boca_west = City("Boca West", "FL", 26.38, -80.16)
+    places, repo = FakePlaces([BOCA, boca_west]), InMemoryCityRepository()
+
+    result = service(places, repo).suggest("Boca")
 
     assert [(s.name, s.state, s.source) for s in result.items] == [
-        ("Orlando", "FL", CitySource.CATALOG),
-        ("Orland", "CA", CitySource.ORS),
-        ("Orland Park", "IL", CitySource.ORS),
-        ("New Orleans", "LA", CitySource.CATALOG),
+        ("Boca Raton", "FL", CitySource.ORS),
+        ("Boca West", "FL", CitySource.ORS),
     ]
     assert result.warnings == ()
-    assert places.calls == ["Orl"]
-    assert sorted(repo.rows) == ["orland", "orland park"]  # the catalog city is not stored again
+    assert places.calls == ["Boca"]
+    assert sorted(repo.rows) == ["boca raton", "boca west"]
 
 
 def test_a_city_found_once_comes_from_the_database_afterwards() -> None:
@@ -97,41 +107,41 @@ def test_the_same_query_is_sent_to_ors_once() -> None:
 
 
 def test_longer_queries_skip_ors_once_a_shorter_answer_was_complete() -> None:
-    places = FakePlaces([ORLAND, ORLAND_PARK])  # fewer than a full page: ORS had nothing more
+    places = FakePlaces([BOCA])  # fewer than a full page: ORS had nothing more
     cities = service(places)
 
-    cities.suggest("orl")
-    cities.suggest("orla")
-    cities.suggest("orland p")
+    cities.suggest("boc")
+    cities.suggest("bocx")
+    cities.suggest("boca grande")
 
-    assert places.calls == ["orl"]
+    assert places.calls == ["boc"]
 
 
 def test_a_full_page_from_ors_does_not_stop_longer_queries() -> None:
-    page = [City(f"Orlville {i}", "TX", 30.0, -97.0) for i in range(10)]
-    places = FakePlaces([*page, ORLAND])
+    page = [City(f"Bocville {i}", "TX", 30.0, -97.0) for i in range(10)]
+    places = FakePlaces([*page, BOCA])
     cities = service(places)
 
-    cities.suggest("orl")
-    cities.suggest("orla")
+    cities.suggest("boc")
+    cities.suggest("bocz")
 
-    assert places.calls == ["orl", "orla"]
+    assert places.calls == ["boc", "bocz"]
 
 
-def test_ors_outage_shows_local_results_with_a_note_and_pauses() -> None:
+def test_ors_outage_shows_a_note_and_pauses() -> None:
     clock, places = Clock(), FakePlaces([BOCA], fail=True)
     cities = service(places, clock=clock)
 
-    first = cities.suggest("orl")
-    paused = cities.suggest("boca")
+    first = cities.suggest("boca")
+    paused = cities.suggest("marfa")
     clock.now += OUTAGE_PAUSE_SECONDS + 1
     places.fail = False
     recovered = cities.suggest("boca")
 
-    assert (names(first), first.warnings) == (["Orlando", "New Orleans"], (ONLINE_FAILED,))
+    assert (names(first), first.warnings) == ([], (ONLINE_FAILED,))
     assert (names(paused), paused.warnings) == ([], (ONLINE_FAILED,))
     assert names(recovered) == ["Boca Raton"]
-    assert places.calls == ["orl", "boca"]
+    assert places.calls == ["boca", "boca"]  # a failed query is asked again; the pause skipped 'marfa'
 
 
 def test_without_an_ors_key_only_local_cities_are_shown() -> None:
@@ -146,7 +156,7 @@ def test_a_broken_city_table_still_suggests_catalog_cities() -> None:
 
     result = service(places, InMemoryCityRepository(fail=True)).suggest("orl")
 
-    assert names(result) == ["Orlando", "Orland", "New Orleans"]
+    assert names(result) == ["Orlando", "New Orleans"]
 
 
 def test_repeated_names_from_ors_are_stored_once_first_one_wins() -> None:

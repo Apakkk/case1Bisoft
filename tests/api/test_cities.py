@@ -60,17 +60,18 @@ def offline() -> Iterator[Api]:
 
 
 def test_json_suggestions_are_case_insensitive_and_say_where_they_came_from(api: Api) -> None:
-    data = api.client.get("/api/v1/cities", params={"q": "ORL"}).json()
+    local = api.client.get("/api/v1/cities", params={"q": "ORL"}).json()
+    online = api.client.get("/api/v1/cities", params={"q": "BOCA"}).json()
 
-    assert data == {
+    assert local == {
         "items": [
             {"name": "Orlando", "state": "FL", "source": "catalog"},
-            {"name": "Orland Park", "state": "IL", "source": "ors"},
             {"name": "New Orleans", "state": "LA", "source": "catalog"},
         ],
         "warnings": [],
     }
-    assert api.places.calls == ["ORL"]
+    assert online == {"items": [{"name": "Boca Raton", "state": "FL", "source": "ors"}], "warnings": []}
+    assert api.places.calls == ["BOCA"]  # a local match never asks ORS
 
 
 def test_json_limit_is_validated(api: Api) -> None:
@@ -84,20 +85,22 @@ def test_json_without_a_query_is_empty(api: Api) -> None:
 
 
 def test_html_list_bolds_the_typed_letters_and_marks_ors_cities(api: Api) -> None:
-    html = api.client.get("/admin/cities/suggest", params={"q": "orl"}).text
+    local = api.client.get("/admin/cities/suggest", params={"q": "orl"}).text
+    online = api.client.get("/admin/cities/suggest", params={"q": "boca"}).text
 
-    assert html.count('role="option"') == 3
-    assert 'data-value="Orlando"' in html
-    assert "<strong>Orl</strong>ando" in html
-    assert re.search(r'data-value="Orland Park".*?>ORS</span>', html, re.S)
-    assert "Öneri yok" not in html
+    assert local.count('role="option"') == 2
+    assert 'data-value="Orlando"' in local
+    assert "<strong>Orl</strong>ando" in local
+    assert ">ORS</span>" not in local
+    assert re.search(r'data-value="Boca Raton".*?>ORS</span>', online, re.S)
+    assert "Eşleşen ABD şehri yok" not in local + online
 
 
 def test_html_list_says_so_when_nothing_matches(offline: Api) -> None:
     html = offline.client.get("/admin/cities/suggest", params={"q": "zzz"}).text
 
     assert 'role="option"' not in html
-    assert "Öneri yok — yazdığınız şehir yine de kullanılabilir." in html
+    assert "Eşleşen ABD şehri yok (yalnızca ABD şehirleri destekleniyor)." in html
     assert ONLINE_DISABLED in html
 
 
