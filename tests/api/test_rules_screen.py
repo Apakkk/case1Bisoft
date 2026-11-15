@@ -1,5 +1,6 @@
 """Admin rules page over TestClient: the ranking is edited on screen and written to a copy of rules.yaml."""
 
+import os
 import re
 import shutil
 from collections.abc import Iterator
@@ -84,3 +85,19 @@ def test_quote_page_shows_the_current_priority(screen: Screen) -> None:
 
     assert "Toplam ücret → Merkezin çıkış noktasına uzaklığı → Firma adı" in html
     assert "Sipariş açıklamasında istenen firma varsa ve uygunsa önce o önerilir." in html
+
+
+def test_a_broken_file_keeps_the_last_good_rules_and_the_page_says_so(screen: Screen) -> None:
+    good = screen.path.read_text()
+    assert "Dosya geçersiz" not in screen.client.get("/admin/rules").text  # the valid file has been read once
+    later = screen.path.stat().st_mtime_ns + 1_000_000_000
+
+    screen.path.write_text(good.replace("  - total_cost", "  - totl_cost"))
+    os.utime(screen.path, ns=(later, later))
+    html = screen.client.get("/admin/rules").text
+    quote = screen.client.post("/api/v1/quotes", json=ORDER).json()
+
+    assert "Dosya geçersiz" in html and "son geçerli kurallar" in html
+    assert order_of(html) == ["total_cost", "hq_proximity"]
+    assert quote["carrier"] == "S-Logistics"
+    assert any("son geçerli kurallar" in warning for warning in quote["warnings"])

@@ -29,6 +29,11 @@ class RulesService:
     def current(self) -> RuleSet:
         return self._store.get()
 
+    @property
+    def problem(self) -> str | None:
+        """Set while rules.yaml is broken and the last valid rules are being used (after `current()`)."""
+        return self._store.problem
+
     def active_ranking(self) -> list[str]:
         """The editable part of the ranking (the final tie-breaker is fixed)."""
         return [name for name in self._store.get().ranking if name != FINAL_TIE_BREAKER]

@@ -128,3 +128,23 @@ def test_cities_are_resolved_with_their_state() -> None:
 
     assert (quote.order.origin, quote.order.origin_state) == ("Miami", "FL")
     assert (quote.order.destination, quote.order.destination_state) == ("Atlanta", "GA")
+
+
+def test_a_rules_file_problem_is_reported_with_the_quote() -> None:
+    rules = StaticRules(default_rules())
+    rules.problem = "rules.yaml geçersiz (unknown ranking criterion 'totl_cost'); son geçerli kurallar kullanılıyor."
+    quotes = QuoteService(InMemoryCarrierRepository(CASE_CARRIERS), offline_distances(), rules)
+
+    quote = quotes.quote(request("Miami", "Atlanta", 20, "Reefer"))
+
+    assert quote.status is QuoteStatus.SELECTED  # a configuration problem, not a doubt about this order
+    assert rules.problem in quote.warnings
+
+
+def test_a_limit_of_a_carrier_that_fails_another_constraint_does_not_need_review() -> None:
+    # Haversine ~292 mi, near S-Logistics' 300 limit, but S-Logistics does not carry Hazardous anyway.
+    quote = service().quote(request("Miami", "Daytona Beach", 40, "Hazardous"))
+
+    assert quote.distance is not None and quote.distance.approximate
+    assert quote.status is QuoteStatus.SELECTED
+    assert not any("S-Logistics" in w for w in quote.warnings)

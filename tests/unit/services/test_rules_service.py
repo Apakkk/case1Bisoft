@@ -41,7 +41,10 @@ def test_unknown_duplicate_and_fixed_names_are_dropped_from_a_posted_draft() -> 
 
 
 def test_available_criteria_lists_registered_ones_not_in_use() -> None:
-    assert available_criteria(["total_cost"]) == ["hq_proximity"]
+    available = available_criteria(["total_cost"])
+
+    assert "hq_proximity" in available
+    assert "total_cost" not in available and "name" not in available
 
 
 class MemoryStore:

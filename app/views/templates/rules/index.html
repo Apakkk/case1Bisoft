@@ -10,6 +10,8 @@
 <p class="muted">Sipariş açıklamasında bir firma istenirse ve tüm kısıtları sağlıyorsa o firma her zaman önce önerilir;
    bu sıralama diğer firmalar için geçerlidir. İstenen firma uygun değilse gerekçesi yazılır ve sıradaki firma seçilir.</p>
 
+{% if problem %}<p><span class="badge bad">Dosya geçersiz</span> {{ problem }}</p>{% endif %}
+
 <h4>Sıralama önceliği</h4>
 {% include "rules/_ranking.html" %}
 

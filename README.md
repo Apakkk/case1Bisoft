@@ -27,7 +27,8 @@ make case-orders              # sends the 7 case orders to the running API: 7/7
 - Rules (ranking priority): http://localhost:8000/admin/rules
 - API docs: http://localhost:8000/docs
 
-Local development: `make install`, `make dev` (database in Docker, API with auto-reload),
+Local development: `make install`, `make dev` (database in Docker, API with auto-reload; it stops
+the Docker API container first, because both listen on port 8000),
 `make check` (ruff + mypy --strict + fast tests).
 
 ## Architecture
@@ -153,7 +154,7 @@ labeled sample for the pinned model version.
 | Compatibility: 0.15 < P(conflict) < 0.85 on the winner | Winner kept, status `needs_review` |
 | Requested carrier: confidence ≥ 0.85 / 0.60–0.85 / < 0.60 | Used / used with `needs_review` / ignored with a warning (price order applies) |
 | Jev unavailable (timeout, auth, quota) or not configured | Missing fields → `needs_input`; an order description or restrictive carrier descriptions → `needs_review`. The ranking is kept and nothing is silently skipped |
-| Approximate distance within 10% of a carrier limit | `needs_review`: the real road distance could change eligibility |
+| Approximate distance within 10% of the limit of a carrier that passes every other constraint | `needs_review`: the real road distance could change eligibility. A carrier that is out anyway (wrong size or cargo type) does not trigger it |
 
 ## Distance
 
@@ -262,7 +263,8 @@ The HQ city, origin and destination inputs open a list of up to 5 cities while y
 
 Errors are `{"error": CODE, "detail": ...}`: `UNKNOWN_LOCATION` (with `problem` and `suggestions`,
 see [Cities](#cities)), `INVALID_ORDER`, `INVALID_CARRIER` (422; an unknown HQ city is a field error
-with a suggestion), `INVALID_RULES` (500, e.g. a typo in `rules.yaml`). Unknown request fields
+with a suggestion), `INVALID_RULES` (500, only when `rules.yaml` has never been valid since the
+app started; a broken edit keeps the last valid rules and adds a warning). Unknown request fields
 are rejected with 422, so a misspelled field is never silently ignored.
 
 ```bash
@@ -315,7 +317,7 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 320 tests, no database/network/Jev, < 2 s
+make test        # 326 tests, no database/network/Jev, ~2 s
 make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API
@@ -334,7 +336,10 @@ make case-orders # the 7 orders against the running API
 ## Changing the rules
 
 `config/rules.yaml` is re-read on the next request after it changes (the Docker container mounts
-`config/`), so no restart is needed. A typo returns `500 INVALID_RULES` naming the problem.
+`config/`), so no restart is needed. A broken edit (a typo, an unknown criterion) does not stop the
+service: quotes keep using the last valid rules, every response carries a warning that names the
+problem, and `/admin/rules` shows it until the file is fixed. Only a file that was never valid
+since the app started returns `500 INVALID_RULES`.
 
 **Change the ranking priority on screen.** `/admin/rules` lists the ranking criteria: move them up or
 down, remove or add them, then save. Saving rewrites only the `ranking` block of `rules.yaml` (comments
@@ -355,18 +360,25 @@ ranking:
 With the case's four carriers this changes none of the seven results (the cheapest carrier is
 also the closest in every tie-free case). Adding a carrier based in the origin city shows the effect.
 
-**Add a ranking criterion from existing data** (e.g. lowest rate per mile): one entry in
-`app/selection/criteria.py`, then add it on `/admin/rules`. This is a code change: in Docker run
-`make run` to rebuild (or use `make dev`, which reloads code automatically).
+**Add a ranking criterion from existing data** (e.g. prefer the specialist, the carrier that carries
+the fewest cargo types): one entry in `app/selection/criteria.py`, then add it on `/admin/rules`.
+This is a code change: in Docker run `make run` to rebuild (or use `make dev`, which reloads code
+automatically).
 
 ```python
-# app/selection/criteria.py (fmt_rate comes from app.selection.formatting)
-"lowest_rate": Criterion(
-    key=lambda c: (c.carrier.rate_per_mile,),
-    label="mil başı ücret",
-    describe=lambda c: fmt_rate(c.carrier.rate_per_mile),
+# app/selection/criteria.py
+"specialist": Criterion(
+    key=lambda c: (len(c.carrier.cargo_types),),
+    label="uzmanlaşma (az yük tipi)",
+    describe=lambda c: f"{len(c.carrier.cargo_types)} yük tipi",
 ),
 ```
+
+A criterion changes a result only when the carriers differ on it. With the case's four carriers
+`specialist` changes none of the seven results; add a cheap generalist (Miami, 40 ft, all three
+cargo types, $0.30 per mile) and order 2 goes to it on price ($70.50), but to S-Logistics ($94.00)
+with `specialist` first. A criterion on the rate per mile would never change anything: every
+carrier drives the same miles, so it orders exactly like the total price.
 
 **Add a criterion that needs a new carrier attribute** (e.g. a rating, higher is better):
 

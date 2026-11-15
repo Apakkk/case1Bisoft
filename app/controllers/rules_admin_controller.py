@@ -22,7 +22,7 @@ Ranking = Annotated[list[str] | None, Form()]
 @router.get("/rules", response_class=HTMLResponse)
 def rules_page(request: Request, service: Service) -> Response:
     saved = service.active_ranking()
-    context = {"rules": service.current(), "editor": _editor(saved, saved)}
+    context = {"rules": service.current(), "editor": _editor(saved, saved), "problem": service.problem}
     return templates.TemplateResponse(request, "rules/index.html", context)
 
 

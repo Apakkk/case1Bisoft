@@ -19,6 +19,7 @@ from app.repositories.rules_repository import RulesSource
 from app.schemas.quote import QuoteRequest
 from app.selection.engine import (
     boundary_warnings,
+    distance_sensitive,
     filter_carriers,
     needs_hq_distance,
     rank,
@@ -82,6 +83,8 @@ class QuoteService:
     def quote(self, request: QuoteRequest) -> Quote:
         rules = self._rules.get()
         trace = _Trace()
+        if self._rules.problem:
+            trace.warnings.append(self._rules.problem)
         order_note = (request.description or "").strip()
         resolved = self._resolve_order(request, rules, trace)
         if resolved.container_size is None or resolved.cargo_type is None:
@@ -113,7 +116,8 @@ class QuoteService:
         )
 
         if distance.approximate:
-            for warning in boundary_warnings(carriers, distance.miles, rules.distance.boundary_warning_ratio):
+            near_limit = distance_sensitive(carriers, order, distance.miles, rules)
+            for warning in boundary_warnings(near_limit, distance.miles, rules.distance.boundary_warning_ratio):
                 trace.flag(warning)
 
         selected = ranked[0] if ranked else None

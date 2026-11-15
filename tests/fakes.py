@@ -152,6 +152,8 @@ class InMemoryCarrierRepository:
 
 
 class StaticRules:
+    problem: str | None = None
+
     def __init__(self, rules: RuleSet) -> None:
         self.rules = rules
 

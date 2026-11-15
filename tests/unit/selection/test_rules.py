@@ -19,8 +19,8 @@ def test_unknown_filter_name_is_rejected_with_the_known_names() -> None:
 
 
 def test_unknown_ranking_name_is_rejected() -> None:
-    with pytest.raises(RulesError, match="unknown ranking criterion 'rating'"):
-        default_rules(ranking=["rating"])
+    with pytest.raises(RulesError, match="unknown ranking criterion 'no_such_criterion'"):
+        default_rules(ranking=["no_such_criterion"])
 
 
 def test_duplicate_ranking_names_are_rejected() -> None:

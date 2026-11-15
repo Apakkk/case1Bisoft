@@ -13,6 +13,8 @@ from app.selection.money import total_cost
 from app.selection.rules import RuleSet
 from app.selection.types import Candidate, FilterResult, Rejection
 
+DISTANCE_CONSTRAINT = "distance_range"
+
 
 def filter_carriers(carriers: Iterable[Carrier], order: Order, route_miles: Decimal, rules: RuleSet) -> FilterResult:
     """Apply every hard constraint to every carrier and keep all reasons (not just the first)."""
@@ -27,6 +29,14 @@ def filter_carriers(carriers: Iterable[Carrier], order: Order, route_miles: Deci
         else:
             eligible.append(Candidate(carrier, total_cost(carrier.rate_per_mile, route_miles)))
     return FilterResult(tuple(eligible), tuple(rejected))
+
+
+def distance_sensitive(
+    carriers: Iterable[Carrier], order: Order, route_miles: Decimal, rules: RuleSet
+) -> tuple[Carrier, ...]:
+    """Carriers that pass every constraint except, possibly, the distance: only their limits can change the result."""
+    others = [name for name in rules.filters if name != DISTANCE_CONSTRAINT]
+    return tuple(c for c in carriers if all(CONSTRAINTS[name](c, order, route_miles) is None for name in others))
 
 
 def needs_hq_distance(rules: RuleSet) -> bool:

@@ -80,3 +80,20 @@ def test_flow_style_ranking_is_rewritten_too(tmp_path: Path) -> None:
     FileRulesRepository(path).save_ranking(["hq_proximity"])
 
     assert "ranking:\n  - hq_proximity\n  - name\n" in path.read_text()
+
+
+def test_a_broken_edit_keeps_the_last_good_rules_and_says_so(tmp_path: Path) -> None:
+    path = tmp_path / "rules.yaml"
+    write(path, SHIPPED, 1_000_000_000)
+    repo = FileRulesRepository(path)
+    good = repo.get()
+
+    write(path, SHIPPED.replace("  - total_cost", "  - totl_cost"), 2_000_000_000)
+
+    assert repo.get() is good
+    assert repo.problem is not None and "son geçerli kurallar" in repo.problem
+
+    write(path, SHIPPED, 3_000_000_000)
+
+    assert repo.get().ranking == good.ranking
+    assert repo.problem is None

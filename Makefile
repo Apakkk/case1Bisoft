@@ -34,7 +34,8 @@ migrate: ## Apply the idempotent SQL files in db/migrations (keeps data)
 		docker compose exec -T db sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"' < "$$f" || exit 1; \
 	done
 
-dev: up ## Run the API locally with auto-reload on http://localhost:8000
+dev: up ## Run the API locally with auto-reload on http://localhost:8000 (stops the Docker API first)
+	@docker compose stop app >/dev/null 2>&1 || true  # both would listen on port 8000
 	uv run uvicorn app.main:app --reload
 
 test: ## Fast tests: no database, no network, no Jev
