@@ -54,8 +54,8 @@ def test_list_page_shows_every_carrier(screen: Screen) -> None:
     assert "≤ 300 mil" in html and "≥ 250 mil" in html
 
 
-def test_root_redirects_to_the_admin_screen(screen: Screen) -> None:
-    response = screen.client.get("/", follow_redirects=False)
+def test_admin_root_redirects_to_the_carriers_screen(screen: Screen) -> None:
+    response = screen.client.get("/admin", follow_redirects=False)
 
     assert response.status_code == 307
     assert response.headers["location"] == "/admin/carriers"

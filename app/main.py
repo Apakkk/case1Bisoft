@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
@@ -15,6 +14,7 @@ from app.controllers import (
     city_admin_controller,
     city_api_controller,
     health_controller,
+    home_controller,
     quote_admin_controller,
     quote_controller,
     rules_admin_controller,
@@ -64,12 +64,8 @@ def create_app() -> FastAPI:
     app.include_router(quote_admin_controller.router)
     app.include_router(rules_admin_controller.router)
     app.include_router(city_admin_controller.router)
+    app.include_router(home_controller.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-    @app.get("/", include_in_schema=False)
-    def home() -> RedirectResponse:
-        return RedirectResponse("/admin/carriers")
-
     return app
 
 

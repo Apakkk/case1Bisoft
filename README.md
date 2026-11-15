@@ -5,6 +5,7 @@ distance, ranking and the explanation are **deterministic code**. The TypeSafe *
 used only where the *data* is free text: it matches the order's description against each carrier's
 description (and fills order fields that were left empty).
 
+- Home page: the carriers as a truck showroom, each name lettered on a trailer; a new carrier is a new truck
 - REST API: `POST /api/v1/quotes`, `/api/v1/carriers` and `GET /api/v1/cities` (Swagger at `/docs`)
 - Admin screen: carrier CRUD with an editable free-text description, a quote form and a rules page;
   every city input suggests US cities as you type, and a mistyped city is answered with "did you mean"
@@ -22,6 +23,7 @@ make run                      # PostgreSQL + API in Docker; schema and seed load
 make case-orders              # sends the 7 case orders to the running API: 7/7
 ```
 
+- Home page (truck showroom): http://localhost:8000/
 - Admin screen: http://localhost:8000/admin/carriers
 - Quote form: http://localhost:8000/admin/quote
 - Rules (ranking priority): http://localhost:8000/admin/rules
@@ -266,6 +268,39 @@ The HQ city, origin and destination inputs open a list of up to 5 cities while y
 
 `scripts/build_us_cities.py` rebuilds `us_cities.csv` from the two public files (~7 MB download).
 
+## Home page
+
+`/` shows every carrier as the same truck photo with the carrier's name lettered on the trailer
+(`app/controllers/home_controller.py`, `app/views/showroom.py`, `templates/home/index.html`,
+`static/home/`). It reads `CarrierService.list()` and nothing else, so it never calls Jev or
+OpenRouteService, and a carrier added on the admin screen appears as a new truck on the next load.
+
+- **Markings in perspective.** Each fact is painted where a real truck carries that kind of information:
+  the name with the rate under it on the curtain, a container-size stencil at the curtain's rear corner,
+  cargo badges stacked on its front edge (with a diamond placard only for Hazardous), and the home city with the
+  distance range on the cab door. The curtain (1000 × 200 units, about 5:1) and the door (300 × 270) are
+  HTML boxes mapped onto their four measured corners with CSS `matrix3d` homographies computed on the
+  server, so the page is right before any script runs; the script only shrinks text to fit. Each card is
+  laid out at the photo's pixel size and scaled as a whole, which keeps the markings in place at any width.
+- **Images.** `scene.jpg` is the reference photo with its logo removed; `truck.webp` is the same truck
+  cut out of it (Apple Vision foreground mask), so the two line up pixel for pixel; `scene-blur.jpg` is
+  the pre-blurred backdrop. Using another photo means measuring `SCENE_PANEL`, `SCENE_DOOR` and
+  `TRUCK_ORIGIN` again (unit tests check that the matrices land on the measured corners).
+- **Showroom.** Drag, wheel/trackpad, swipe or ← → move the row with momentum; the centre truck is the
+  active carrier and drives the headline, counter, colour and URL hash (`#firma-<id>`, so a reload keeps
+  it). Clicking a side truck flies it to the centre; clicking the centre truck opens its detail view,
+  where the same truck lands in the full photo and the camera moves between four facts: rate, distance
+  range, container sizes, cargo types (plus the carrier's note, if any). The camera only goes where that
+  fact is painted: each facet's camera box is its marking's projected corners plus a margin, a unit test
+  checks that every camera contains its marking, and the marking lights up when the camera arrives while
+  the others step back. × or Escape returns to the same carrier.
+- **Colour.** Each carrier gets one of 8 accents from a hash of its name (stable across database resets;
+  no column). A carrier change sends a radial noise wave through the background: a small WebGL shader
+  ported from the Codrops demo "Model Texture Transition and Procedural Radial Noise using WebGL" (MIT)
+  with Stefan Gustavson's Perlin noise, drawn only while the wave runs. Without WebGL a CSS glow is used.
+- No libraries and no build step (plain JS and CSS, no CDN). Without JavaScript the page is a scrollable
+  row of trucks with their facts; `prefers-reduced-motion` turns the motion into plain cuts.
+
 ## API
 
 | Method | Path | Notes |
@@ -329,12 +364,13 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | `tests/unit/distance` | Every case-table pair without a request, city resolution and "did you mean", table reload, suggestion ranking, the US city list and its build script, ORS client (httpx MockTransport) | – | – | – |
 | `tests/unit/services` | Confidence bands, hazardous asymmetry, order/carrier compatibility, Jev outage, batching, city suggestion quota guards | – | – | fake |
 | `tests/unit/clients` | The Jev client with a scripted SDK: token count and model, outage pause, the answer cache and its key | – | – | scripted |
-| `tests/api` | REST endpoints and the admin screen over TestClient | fake | – | fake |
+| `tests/unit/test_showroom.py` | Home page view model: the curtain and door homographies land on the measured corners, every facet camera frames its marking, accents, carrier facts | – | – | – |
+| `tests/api` | REST endpoints, the admin screen and the home page over TestClient | fake | – | fake |
 | `tests/integration` | PostgreSQL repositories, CHECK constraints, the real app wiring | ✓ | – | – |
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 391 tests, no database/network/Jev, ~2 s
+make test        # 422 tests, no database/network/Jev, ~2 s
 make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API

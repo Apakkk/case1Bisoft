@@ -1,0 +1,548 @@
+/* Home page truck showroom (templates/home/index.html, static/home/home.js). Not loaded by the admin screens.
+   Every truck card is laid out at the cut-out's own pixel size (--truck-w x --truck-h) and scaled by --k, so the
+   lettering's matrix3d (--panel-truck, computed on the server) stays on the trailer at any width. */
+
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #a9c1e8;
+}
+
+:root {
+  --bg: #04060b;
+  --ink: #f3f5f9;
+  --muted: rgba(243, 245, 249, 0.58);
+  --faint: rgba(243, 245, 249, 0.34);
+  --line: rgba(255, 255, 255, 0.12);
+  --ease: cubic-bezier(0.7, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --font: "SF Pro Display", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --gutter: clamp(16px, 3vw, 44px);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html { background: var(--bg); }
+
+body.showroom {
+  margin: 0;
+  min-height: 100svh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  transition: --accent 1.4s var(--ease);
+}
+
+a { color: inherit; }
+button { font: inherit; color: inherit; }
+
+.visually-hidden {
+  position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+.js-only { display: none; }
+.js .js-only { display: revert; }
+
+/* ---------- Stage: the world behind the trucks ---------- */
+
+.stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+
+.stage-scene {
+  position: absolute; inset: -6%;
+  background-size: cover; background-position: 62% 46%; /* scene-blur.jpg: already blurred and darkened */
+}
+
+.stage-noise {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  mix-blend-mode: screen; opacity: 0; transition: opacity 0.8s ease;
+}
+.has-gl .stage-noise { opacity: 1; }
+
+.stage-glow {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 46% 34% at 50% 58%, color-mix(in oklab, var(--accent) 30%, transparent), transparent 72%),
+    radial-gradient(ellipse 120% 70% at 50% 120%, rgba(0, 0, 0, 0.9), transparent 60%);
+}
+.has-gl .stage-glow {
+  background: radial-gradient(ellipse 120% 70% at 50% 120%, rgba(0, 0, 0, 0.9), transparent 60%);
+}
+
+.stage-word {
+  position: absolute; left: 0; right: 0; top: 9svh; margin: 0;
+  display: flex; justify-content: center; /* centred even when wider than the screen, without a transform */
+  font-size: clamp(110px, 19vw, 340px); font-weight: 800; letter-spacing: -0.045em; line-height: 0.8;
+  white-space: nowrap;
+  color: transparent;
+  -webkit-text-stroke: 1px color-mix(in oklab, var(--accent) 34%, rgba(255, 255, 255, 0.08));
+  opacity: 0.55;
+  transition: opacity 0.6s ease;
+}
+
+.stage-floor {
+  position: absolute; left: 0; right: 0; top: var(--floor, 70svh); bottom: 0;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in oklab, var(--accent) 40%, transparent) 50%, transparent) top / 100% 1px no-repeat,
+    linear-gradient(to bottom, rgba(4, 6, 11, 0.35), rgba(4, 6, 11, 0.94) 55%);
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  position: relative; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 26px var(--gutter);
+}
+.js .topbar { position: fixed; top: 0; left: 0; right: 0; }
+
+.brand {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 600; letter-spacing: 0.01em; text-decoration: none;
+}
+.brand-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 18px var(--accent);
+}
+
+.topnav { display: flex; gap: clamp(14px, 2.4vw, 34px); }
+.topnav a {
+  font-size: 14px; color: var(--muted); text-decoration: none; transition: color 0.25s ease;
+}
+.topnav a:hover { color: var(--ink); }
+
+/* ---------- Hero copy ---------- */
+
+.showroom-main { position: relative; z-index: 10; }
+
+.hero-copy { position: relative; z-index: 20; padding: 8px var(--gutter) 24px; max-width: 640px; }
+
+.eyebrow {
+  display: flex; align-items: center; gap: 12px; margin: 0;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+}
+.eyebrow [data-counter], .eyebrow [data-detail-counter] { color: var(--accent); }
+.eyebrow > span { white-space: nowrap; }
+.eyebrow-sep { flex: 0 0 28px; height: 1px; background: var(--faint); }
+
+.hero-name {
+  margin: 18px 0 14px;
+  font-size: clamp(42px, 6vw, 96px); font-weight: 700; letter-spacing: -0.04em; line-height: 0.95;
+  text-wrap: balance;
+}
+.hero-line { margin: 0 0 30px; font-size: 16px; line-height: 1.5; color: var(--muted); }
+
+.hero-actions { display: flex; align-items: center; gap: 22px; }
+
+.cta {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 26px; border-radius: 999px;
+  background: var(--ink); color: #05070c;
+  font-size: 15px; font-weight: 600; text-decoration: none;
+  transition: background-color 0.3s ease, transform 0.3s var(--ease-out);
+}
+.cta:hover { background: var(--accent); transform: translateY(-1px); }
+
+.ghost {
+  padding: 6px 0; border: 0; background: none; cursor: pointer;
+  font-size: 15px; color: var(--ink); text-decoration: none;
+  background-image: linear-gradient(var(--accent), var(--accent));
+  background-size: 100% 1px; background-position: 0 100%; background-repeat: no-repeat;
+  transition: background-size 0.35s var(--ease);
+}
+.ghost:hover { background-size: 30% 1px; }
+
+/* ---------- Trucks (shared) ---------- */
+
+.fleet { --k: 0.32; list-style: none; margin: 0; padding: 0; }
+
+.truck {
+  position: relative;
+  width: calc(var(--truck-w) * var(--k));
+  height: calc(var(--truck-h) * var(--k));
+}
+
+.truck-art {
+  position: absolute; left: 0; top: 0;
+  width: var(--truck-w); height: var(--truck-h);
+  transform: scale(var(--k)); transform-origin: 0 0;
+}
+
+.truck-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  user-select: none; -webkit-user-drag: none;
+  -webkit-box-reflect: below -16px linear-gradient(transparent 76%, rgba(255, 255, 255, 0.16));
+}
+
+/* The markings: each plane is a box in its own units (curtain 1000 x 200, door 300 x 270) mapped onto the photo with a
+   matrix3d computed on the server (app/views/showroom.py). Keep every ancestor flat. The boxes inside come from the
+   same numbers as the detail view's cameras, so a facet's zoom always lands on its marking. */
+.livery, .door {
+  position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none;
+}
+.livery { width: 1000px; height: 200px; transform: var(--panel-truck); }
+.door { width: 300px; height: 270px; transform: var(--door-truck); }
+.livery-scene { transform: var(--panel-scene); }
+.door-scene { transform: var(--door-scene); }
+.livery > * { position: absolute; }
+
+/* White vinyl in the photo's light: warm sunset towards the rear, cooler towards the cab, faint curtain seams. */
+.vinyl {
+  color: transparent;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 78px, rgba(10, 16, 30, 0.16) 86px, transparent 92px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0) 40%, rgba(20, 28, 48, 0.18)),
+    linear-gradient(90deg, #ffe4d6 0%, #f4f2f2 28%, #e9eef7 62%, #d6deec 100%);
+  -webkit-background-clip: text; background-clip: text;
+  opacity: 0.95;
+}
+
+/* Name with the rate under it, like "Information Technologies" under the logo in the reference photo. */
+.livery-mark { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+.livery-name {
+  display: block; max-width: 100%;
+  font-size: calc(var(--fs, 100) * 1px); font-weight: 800; letter-spacing: -0.025em; line-height: 0.96;
+  text-wrap: balance;
+}
+.livery-rate {
+  display: block; margin-top: 10px;
+  font-size: 34px; font-weight: 600; letter-spacing: 0.01em; line-height: 1; white-space: nowrap;
+}
+/* A thin accent band under the name, like a real livery stripe. */
+.livery-mark::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 6px;
+  background: var(--accent); opacity: 0.55; border-radius: 1px;
+}
+
+/* Container size, stencilled at the curtain's rear corner. */
+.livery-size {
+  display: flex; flex-direction: column; justify-content: flex-end; gap: 6px;
+  font-family: var(--mono); color: rgba(236, 240, 247, 0.86); white-space: nowrap;
+}
+.livery-size { color: rgba(236, 240, 247, 0.74); }
+.livery-size-label { font-size: 12px; letter-spacing: 0.32em; opacity: 0.8; }
+.livery-size-value { font-size: calc(var(--fs, 30) * 1px); font-weight: 700; letter-spacing: 0.04em; line-height: 1; }
+
+/* Cargo badges stacked on the curtain's front edge, and a diamond placard under them only for hazardous loads. */
+.livery-cargo { display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; }
+.cargo-inner { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 100%; }
+.cargo-badge {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 10px;
+  border: 2px solid rgba(236, 240, 247, 0.82); border-radius: 6px;
+  font: 700 calc(var(--fs, 18) * 1px) / 1.05 var(--mono); letter-spacing: 0.1em; text-align: right;
+  color: rgba(236, 240, 247, 0.9);
+}
+.cargo-snow { font-size: 0.85em; letter-spacing: 0; }
+.hazmat {
+  flex: none; width: 50px; height: 50px; margin: 14px 10px 10px 0; display: grid; place-items: center;
+  transform: rotate(45deg); background: #e9e5dc; border: 4px solid #c9242b; border-radius: 3px;
+}
+.hazmat span { transform: rotate(-45deg); font: 800 9px/1 var(--font); letter-spacing: 0.03em; color: #bf1f26; }
+
+/* The cab door: name, home city and distance range, as trucks carry their identity on the door. */
+.door { display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 0 8px; }
+.door > span { display: block; white-space: nowrap; line-height: 1.08; }
+.door-name { font-size: calc(var(--fs, 56) * 1px); font-weight: 800; letter-spacing: -0.02em; }
+.door-line { font-size: calc(var(--fs, 30) * 1px); font-weight: 600; color: rgba(238, 241, 247, 0.9); }
+
+/* In the detail view the selected facet's marking keeps full strength; the others step back. */
+.detail-marks [data-decal], .detail-marks .livery-name { transition: opacity 0.6s ease; }
+.detail-marks[data-focus="rate"] [data-decal]:not([data-decal="rate"]),
+.detail-marks[data-focus="distance"] [data-decal]:not([data-decal="distance"]),
+.detail-marks[data-focus="equipment"] [data-decal]:not([data-decal="equipment"]),
+.detail-marks[data-focus="cargo"] [data-decal]:not([data-decal="cargo"]),
+.detail-marks[data-focus]:not([data-focus="rate"]) .livery-name { opacity: 0.4; }
+
+/* The marking a facet talks about lights up when the camera arrives. */
+[data-decal].is-lit { animation: decal-lit 1.9s var(--ease) both; }
+@keyframes decal-lit {
+  0%, 100% { filter: none; }
+  35% { filter: brightness(1.45) drop-shadow(0 0 10px var(--accent)) drop-shadow(0 0 2px var(--accent)); }
+}
+
+.truck-shade {
+  position: absolute; inset: 0; opacity: 0; pointer-events: none;
+  background: #020309;
+  -webkit-mask: var(--truck-mask) 0 0 / 100% 100% no-repeat;
+  mask: var(--truck-mask) 0 0 / 100% 100% no-repeat;
+}
+
+/* A soft light sweep over the hero truck when it arrives. */
+.truck-art::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 48%, transparent 60%) -120% 0 / 220% 100% no-repeat;
+  -webkit-mask: var(--truck-mask) 0 0 / 100% 100% no-repeat;
+  mask: var(--truck-mask) 0 0 / 100% 100% no-repeat;
+}
+.truck.is-sweep .truck-art::after { animation: sweep 1.6s var(--ease) both; mix-blend-mode: screen; }
+@keyframes sweep {
+  0% { opacity: 1; background-position: -120% 0; }
+  100% { opacity: 1; background-position: 120% 0; }
+}
+
+.truck-facts h2 { margin: 6px 0 4px; font-size: 20px; letter-spacing: -0.02em; }
+.truck-facts p { margin: 0 0 10px; color: var(--muted); font-size: 14px; }
+.truck-facts dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin: 0; font-size: 14px; }
+.truck-facts dt { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.truck-facts dd { margin: 2px 0 0; }
+.truck-note { margin-top: 12px !important; font-style: italic; }
+
+/* ---------- Without JS: a plain scrollable row of trucks with their facts ---------- */
+
+html:not(.js) .fleet {
+  display: flex; gap: 32px; overflow-x: auto; scroll-snap-type: x mandatory;
+  padding: 24px var(--gutter) 56px; scroll-padding-inline: var(--gutter);
+}
+html:not(.js) .fleet > .truck { flex: 0 0 auto; scroll-snap-align: start; margin-bottom: 220px; }
+html:not(.js) .truck-facts { position: absolute; top: 100%; left: 0; width: calc(var(--truck-w) * var(--k)); padding-top: 18px; }
+html:not(.js) .stage { position: fixed; }
+
+/* ---------- With JS: the showroom ---------- */
+
+.js body.showroom { height: 100svh; overflow: hidden; }
+
+.js .hero { position: fixed; inset: 0; }
+
+.js .hero-copy {
+  position: absolute; left: var(--gutter); bottom: clamp(28px, 6svh, 64px);
+  padding: 0; max-width: min(38vw, 560px);
+  transition: opacity 0.55s ease, transform 0.8s var(--ease);
+}
+
+.js .fleet {
+  position: absolute; inset: 0; z-index: 10;
+  touch-action: none; cursor: grab;
+  transition: opacity 0.6s ease, transform 0.9s var(--ease);
+}
+.js .fleet.is-dragging { cursor: grabbing; }
+
+.js .fleet > .truck {
+  position: absolute;
+  left: calc(50% - var(--truck-w) * var(--k) / 2);
+  top: calc(var(--floor, 70svh) - var(--truck-h) * var(--k) + 17px * var(--k));
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.js .fleet > .truck.is-off { visibility: hidden; }
+.js .truck-facts { display: none; }
+
+/* Only the truck's own silhouette (trailer + cab) takes clicks, not the empty corners of the cut-out. */
+.truck-hit {
+  position: absolute; inset: 0; z-index: 2; padding: 0; border: 0; background: none; cursor: inherit;
+  clip-path: polygon(1.1% 24.9%, 64.4% 1.6%, 94.7% 11.6%, 98.9% 60.2%, 98.9% 90.8%, 75.8% 98.8%, 9.5% 88.4%, 1.3% 84.3%);
+}
+.truck-hit:focus-visible { outline: none; }
+.truck:has(.truck-hit:focus-visible) .truck-art {
+  outline: calc(2px / var(--k)) solid var(--accent); outline-offset: calc(10px / var(--k)); border-radius: calc(14px / var(--k));
+}
+
+.js .fleet-nav {
+  position: absolute; z-index: 20; right: var(--gutter); bottom: clamp(28px, 6svh, 64px);
+  display: flex; align-items: center; gap: 18px;
+  transition: opacity 0.5s ease;
+}
+
+.nav-btn {
+  width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, 0.02); cursor: pointer;
+  transition: border-color 0.3s ease, background-color 0.3s ease;
+}
+.nav-btn:hover { border-color: var(--accent); background: rgba(255, 255, 255, 0.05); }
+.nav-btn svg, .detail-close svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+.drag-hint {
+  display: flex; gap: 14px; margin: 0;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint);
+}
+.drag-hint span + span::before { content: "·"; margin-right: 14px; }
+
+/* Hero leaving for the detail view. */
+.is-detail .hero-copy { opacity: 0; transform: translateY(24px); }
+.is-detail .fleet { opacity: 0; transform: scale(0.88) translateY(3%); }
+.is-detail .fleet-nav, .in-detail .stage-word { opacity: 0; }
+.topnav { transition: opacity 0.4s ease; }
+.in-detail .topnav { opacity: 0; pointer-events: none; }
+.hero[inert] { pointer-events: none; }
+
+/* The truck travelling between the showroom and the detail view. */
+.flyer {
+  position: fixed; left: 0; top: 0; z-index: 25; pointer-events: none;
+  width: var(--truck-w); height: var(--truck-h); transform-origin: 0 0;
+}
+.flyer .truck-art { transform: none; }
+
+/* ---------- Detail view ---------- */
+
+.detail { position: fixed; inset: 0; z-index: 20; overflow: hidden; }
+
+.detail-stage {
+  position: absolute; left: 0; right: 0; top: 12svh; bottom: 12svh;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent),
+    linear-gradient(transparent, #000 10%, #000 90%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent, #000 9%, #000 91%, transparent),
+    linear-gradient(transparent, #000 10%, #000 90%, transparent);
+  mask-composite: intersect;
+  opacity: 0; transition: opacity 0.7s ease;
+}
+.detail.is-scene .detail-stage { opacity: 1; }
+
+.detail-camera {
+  position: absolute; left: 0; top: 0; width: 1789px; height: 576px; transform-origin: 0 0;
+}
+.detail-camera.is-moving { transition: transform 1.15s var(--ease); }
+.detail-marks { position: absolute; inset: 0; pointer-events: none; }
+.detail-scene {
+  position: absolute; inset: 0; width: 100%; height: 100%; user-select: none;
+  /* Soft photo edges for the moments the whole frame is in view (landing, leaving). */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent),
+    linear-gradient(transparent, #000 9%, #000 97%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent),
+    linear-gradient(transparent, #000 9%, #000 97%, transparent);
+  mask-composite: intersect;
+}
+
+.detail::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  background:
+    linear-gradient(90deg, rgba(4, 6, 11, 0.95), rgba(4, 6, 11, 0.86) 22%, rgba(4, 6, 11, 0.45) 34%, transparent 46%),
+    linear-gradient(270deg, rgba(4, 6, 11, 0.95), rgba(4, 6, 11, 0.84) 17%, transparent 31%);
+  opacity: 0; transition: opacity 0.7s ease;
+}
+.detail.is-open::before { opacity: 1; }
+
+.detail-copy {
+  position: absolute; z-index: 2; left: var(--gutter); top: 50%; transform: translateY(-50%);
+  width: min(30vw, 440px);
+}
+.detail-name {
+  margin: 16px 0 26px;
+  font-size: clamp(38px, 4.6vw, 76px); font-weight: 700; letter-spacing: -0.04em; line-height: 0.95;
+  text-wrap: balance;
+}
+.facet-panel { min-height: 170px; }
+.facet-label {
+  margin: 0; font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--accent);
+}
+.facet-value { margin: 10px 0 12px; font-size: clamp(28px, 3vw, 44px); font-weight: 600; letter-spacing: -0.03em; }
+.facet-text { margin: 0; max-width: 34ch; font-size: 15px; line-height: 1.55; color: var(--muted); }
+.detail-note {
+  margin: 22px 0 0; padding-left: 14px; border-left: 2px solid var(--accent);
+  font-size: 14px; line-height: 1.5; color: var(--muted);
+}
+.detail-actions { display: flex; align-items: center; gap: 22px; margin-top: 30px; }
+
+.facets {
+  position: absolute; z-index: 2; right: var(--gutter); top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; width: 240px;
+}
+.facet {
+  position: relative; display: grid; grid-template-columns: 34px 1fr; grid-template-rows: auto auto;
+  column-gap: 8px; padding: 18px 0 18px 18px; text-align: left; cursor: pointer;
+  border: 0; border-top: 1px solid var(--line); background: none; color: var(--faint);
+  transition: color 0.35s ease;
+}
+.facet:last-child { border-bottom: 1px solid var(--line); }
+.facet::before {
+  content: ""; position: absolute; left: 0; top: 18px; bottom: 18px; width: 2px;
+  background: var(--accent); transform: scaleY(0); transform-origin: 50% 0; transition: transform 0.5s var(--ease);
+}
+.facet[aria-selected="true"] { color: var(--ink); }
+.facet[aria-selected="true"]::before { transform: scaleY(1); }
+.facet:hover { color: var(--ink); }
+.facet-index { grid-row: span 2; font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; padding-top: 5px; }
+.facet-name { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.facet-mini { font-size: 13px; color: var(--faint); margin-top: 4px; }
+
+.detail-close {
+  position: absolute; z-index: 3; top: 20px; right: var(--gutter);
+  width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  border: 1px solid var(--line); background: rgba(4, 6, 11, 0.5); cursor: pointer;
+  transition: border-color 0.3s ease, transform 0.4s var(--ease-out);
+}
+.detail-close:hover { border-color: var(--accent); transform: rotate(90deg); }
+
+/* Detail UI comes in after the truck lands, and leaves before it flies back. */
+.detail .detail-copy > *, .detail .facets > *, .detail-close {
+  opacity: 0; transform: translateY(18px);
+  transition: opacity 0.45s ease, transform 0.7s var(--ease-out);
+}
+.detail.is-open .detail-copy > *, .detail.is-open .facets > *, .detail.is-open .detail-close {
+  opacity: 1; transform: none;
+  transition-delay: calc(var(--i, 0) * 60ms);
+}
+.detail-close { transform: none; }
+
+.facet-panel.is-swapping > * { animation: facet-in 0.6s var(--ease-out) both; }
+.facet-panel.is-swapping > :nth-child(2) { animation-delay: 50ms; }
+.facet-panel.is-swapping > :nth-child(3) { animation-delay: 100ms; }
+@keyframes facet-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+.swap-in { animation: swap-in 0.65s var(--ease-out) both; }
+@keyframes swap-in { from { opacity: 0; transform: translateY(0.22em); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+
+/* ---------- Empty fleet ---------- */
+
+.hero-empty .fleet-empty { position: relative; }
+.js .hero-empty .fleet-empty { position: absolute; inset: 0; --k: 0.62; }
+.js .hero-empty .truck {
+  position: absolute; left: calc(50% - var(--truck-w) * var(--k) / 2);
+  top: calc(70svh - var(--truck-h) * var(--k)); filter: brightness(0.7);
+}
+
+/* ---------- Phones ---------- */
+
+@media (max-width: 760px) {
+  .topbar { padding: 16px var(--gutter); }
+  .topnav { gap: 14px; }
+  .topnav a { font-size: 13px; }
+  .brand { font-size: 14px; }
+
+  .js .hero-copy { top: 84px; bottom: auto; right: var(--gutter); max-width: none; }
+  .hero-name { margin: 12px 0 8px; font-size: clamp(36px, 11vw, 52px); }
+  .hero-line { margin-bottom: 18px; font-size: 14px; }
+  .cta { padding: 12px 22px; font-size: 14px; }
+
+  .stage-word { top: 31svh; font-size: 30vw; opacity: 0.45; }
+
+  .js .fleet-nav { left: var(--gutter); right: var(--gutter); bottom: 22px; justify-content: space-between; }
+  .nav-btn { width: 46px; height: 46px; }
+
+  .js .hero-empty .fleet-empty { --k: 0.34; }
+
+  /* Detail: name and text, then the truck, then the facets as a row. */
+  .detail { overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; padding: 78px 0 32px; }
+  .detail::before { background: linear-gradient(rgba(4, 6, 11, 0.7), rgba(4, 6, 11, 0.2) 40%, rgba(4, 6, 11, 0.85)); position: fixed; }
+  .detail-copy { position: relative; left: auto; top: auto; transform: none; width: auto; padding: 0 var(--gutter); order: 1; }
+  .detail-name { margin: 10px 0 16px; font-size: clamp(34px, 10vw, 48px); }
+  .detail-stage { position: relative; top: auto; bottom: auto; order: 2; flex: 0 0 auto; height: 40svh; margin: 6px 0; }
+  .facets {
+    position: relative; right: auto; top: auto; transform: none; order: 3; width: auto;
+    display: grid; grid-template-columns: repeat(4, 1fr); margin: 0 var(--gutter);
+  }
+  .facet {
+    grid-template-columns: 1fr; padding: 12px 6px 12px 0; border-top: 0; border-bottom: 1px solid var(--line);
+  }
+  .facet:last-child { border-bottom: 1px solid var(--line); }
+  .facet::before { left: 0; right: 0; top: auto; bottom: -1px; width: auto; height: 2px; transform: scaleX(0); transform-origin: 0 50%; }
+  .facet[aria-selected="true"]::before { transform: scaleX(1); }
+  .facet-index { grid-row: auto; padding: 0; }
+  .facet-name { font-size: 14px; margin-top: 4px; }
+  .facet-mini { display: none; }
+  .facet-panel { min-height: 0; }
+  .detail-close { position: fixed; top: 14px; width: 46px; height: 46px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.18s !important; }
+  body.showroom { transition: none; }
+}

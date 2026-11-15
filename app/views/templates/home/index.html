@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Filo · Taşıyıcı Seçimi</title>
+  <link rel="icon" href="data:,">
+  <link rel="preload" as="image" type="image/webp" href="{{ url_for('static', path=truck.src) }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='home/home.css') }}">
+  <script>document.documentElement.classList.add("js");</script>
+  <script src="{{ url_for('static', path='home/home.js') }}" defer></script>
+</head>
+{%- set first = cards[0] if cards else none %}
+{#- One carrier's markings on the truck: curtain (name + rate, size stencil, cargo badges) and cab door. #}
+{%- macro markings(c) %}
+            <div class="livery">
+              <div class="livery-mark" style="{{ styles.mark }}">
+                <span class="livery-name vinyl" style="--fs: {{ c.font }}">{{ c.name }}</span>
+                <span class="livery-rate vinyl" data-decal="rate">{{ c.rate_line }}</span>
+              </div>
+              <div class="livery-size" data-decal="equipment" style="{{ styles.size }}">
+                <span class="livery-size-label">KONTEYNER</span>
+                <span class="livery-size-value" style="--fs: {{ c.size_font }}">{{ c.size_mark }}</span>
+              </div>
+              <div class="livery-cargo" data-decal="cargo" style="{{ styles.cargo }}">
+                <span class="cargo-inner" style="--fs: {{ c.badge_font }}">
+                  {%- for b in c.cargo_badges %}
+                  <span class="cargo-badge">{% if b == "REEFER" %}<span class="cargo-snow">❄</span>{% endif %}{{ b }}</span>
+                  {%- endfor %}
+                  {%- if c.hazardous %}<span class="hazmat"><span>HAZMAT</span></span>{% endif %}
+                </span>
+              </div>
+            </div>
+            <div class="door" data-decal="distance">
+              {%- for line in c.door %}
+              <span class="{{ 'door-name vinyl' if loop.first else 'door-line' }}" style="--fs: {{ line.font }}">{{ line.text }}</span>
+              {%- endfor %}
+            </div>
+{%- endmacro %}
+<body class="showroom" style="--panel-truck: {{ truck.matrix }}; --panel-scene: {{ scene.matrix }};
+  --door-truck: {{ truck.door_matrix }}; --door-scene: {{ scene.door_matrix }};
+  --accent: {{ first.accent if first else '#a9c1e8' }}; --truck-w: {{ truck.width }}px; --truck-h: {{ truck.height }}px;
+  --truck-mask: url('{{ url_for('static', path=truck.src) }}');">
+  <div class="stage" aria-hidden="true">
+    <div class="stage-scene" style="background-image: url('{{ url_for('static', path='home/scene-blur.jpg') }}')"></div>
+    <canvas class="stage-noise" data-noise></canvas>
+    <div class="stage-glow"></div>
+    <p class="stage-word" data-word>{{ first.name if first else "Filo" }}</p>
+    <div class="stage-floor"></div>
+  </div>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-current="page"><span class="brand-dot"></span>Taşıyıcı Seçimi</a>
+    <nav class="topnav" aria-label="Ana menü">
+      <a href="/admin/carriers">Firmalar</a>
+      <a href="/admin/quote">Teklif</a>
+      <a href="/admin/rules">Kurallar</a>
+      <a href="/docs">API</a>
+    </nav>
+  </header>
+
+  <main class="showroom-main">
+  {% if cards %}
+    <section class="hero" data-hero aria-roledescription="carousel" aria-label="Taşıyıcı filosu">
+      <div class="hero-copy">
+        <p class="eyebrow"><span data-counter>01 / {{ "%02d" | format(cards | length) }}</span><span class="eyebrow-sep"></span>Filo</p>
+        <h1 class="hero-name" data-name>{{ first.name }}</h1>
+        <p class="hero-line" data-line>{{ first.line }}</p>
+        <div class="hero-actions">
+          <a class="cta" href="/admin/quote">Teklif al</a>
+          <button type="button" class="ghost js-only" data-open>Ayrıntılar</button>
+        </div>
+      </div>
+
+      <ol class="fleet" data-fleet>
+        {%- for c in cards %}
+        <li class="truck" id="truck-{{ c.id }}" data-index="{{ loop.index0 }}" style="--accent: {{ c.accent }}"
+            role="group" aria-roledescription="slide" aria-label="{{ loop.index }} / {{ cards | length }}: {{ c.name }}">
+          <button type="button" class="truck-hit js-only" tabindex="-1" aria-label="{{ c.name }}"></button>
+          <div class="truck-art" aria-hidden="true">
+            <img class="truck-img" src="{{ url_for('static', path=truck.src) }}" width="{{ truck.width }}"
+                 height="{{ truck.height }}" alt="" decoding="async" draggable="false">
+            {{- markings(c) }}
+            <div class="truck-shade"></div>
+          </div>
+          <div class="truck-facts">
+            <h2>{{ c.name }}</h2>
+            <p>{{ c.line }}</p>
+            <dl>
+              {%- for f in c.facets %}
+              <div><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd></div>
+              {%- endfor %}
+            </dl>
+            {% if c.note %}<p class="truck-note">Firma notu: {{ c.note }}</p>{% endif %}
+          </div>
+        </li>
+        {%- endfor %}
+      </ol>
+
+      <div class="fleet-nav js-only">
+        <button type="button" class="nav-btn" data-prev aria-label="Önceki firma">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <p class="drag-hint"><span>Sürükle</span><span>Kaydır</span><span>← →</span></p>
+        <button type="button" class="nav-btn" data-next aria-label="Sonraki firma">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      <p class="visually-hidden" aria-live="polite" data-live></p>
+    </section>
+
+    <section class="detail" data-detail hidden role="dialog" aria-modal="true" aria-labelledby="detail-name">
+      <div class="detail-stage" data-stage aria-hidden="true">
+        <div class="detail-camera" data-camera>
+          <img class="detail-scene" src="{{ url_for('static', path=scene.src) }}" width="{{ scene.width }}"
+               height="{{ scene.height }}" alt="" decoding="async" draggable="false">
+          <div class="detail-marks" data-marks></div>
+        </div>
+      </div>
+      <div class="detail-copy">
+        <p class="eyebrow"><span data-detail-counter></span><span class="eyebrow-sep"></span><span data-detail-hq></span></p>
+        <h2 class="detail-name" id="detail-name" data-detail-name></h2>
+        <div class="facet-panel" role="tabpanel" id="facet-panel" data-facet-panel>
+          <p class="facet-label" data-facet-label></p>
+          <p class="facet-value" data-facet-value></p>
+          <p class="facet-text" data-facet-text></p>
+        </div>
+        <p class="detail-note" data-detail-note hidden></p>
+        <div class="detail-actions">
+          <a class="cta" href="/admin/quote">Teklif al</a>
+          <a class="ghost" href="/admin/carriers">Firmayı düzenle</a>
+        </div>
+      </div>
+      <div class="facets" role="tablist" aria-orientation="vertical" aria-label="Firma bilgileri" data-facets>
+        {%- for f in first.facets %}
+        <button type="button" class="facet" role="tab" id="facet-{{ f.key }}" data-facet="{{ f.key }}"
+                aria-controls="facet-panel" aria-selected="{{ 'true' if loop.first else 'false' }}"
+                tabindex="{{ 0 if loop.first else -1 }}">
+          <span class="facet-index">{{ "%02d" | format(loop.index) }}</span>
+          <span class="facet-name">{{ f.label }}</span>
+          <span class="facet-mini" data-mini="{{ f.key }}"></span>
+        </button>
+        {%- endfor %}
+      </div>
+      <button type="button" class="detail-close" data-close aria-label="Kapat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </section>
+  {% else %}
+    <section class="hero hero-empty">
+      <div class="hero-copy">
+        <p class="eyebrow">Filo</p>
+        <h1 class="hero-name">Henüz firma yok</h1>
+        <p class="hero-line">İlk taşıyıcıyı ekleyin; tırı burada, römorkunda adıyla görünür.</p>
+        <div class="hero-actions"><a class="cta" href="/admin/carriers">Firma ekle</a></div>
+      </div>
+      <div class="fleet fleet-empty">
+        <div class="truck is-center">
+          <div class="truck-art" aria-hidden="true">
+            <img class="truck-img" src="{{ url_for('static', path=truck.src) }}" width="{{ truck.width }}"
+                 height="{{ truck.height }}" alt="" decoding="async" draggable="false">
+          </div>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+  </main>
+  <script type="application/json" id="fleet-data">{{ data | tojson }}</script>
+</body>
+</html>
