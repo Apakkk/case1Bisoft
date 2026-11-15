@@ -1,4 +1,5 @@
 {# New or edit form. Server-side validation only: the same CarrierService as the JSON API. #}
+{% from "_city_input.html" import city_input %}
 <article>
   <header><strong>{% if carrier_id %}Firmayı düzenle{% else %}Yeni firma{% endif %}</strong></header>
   {% if errors.get("_") %}<p class="error">{{ errors["_"] }}</p>{% endif %}
@@ -9,10 +10,7 @@
         <input name="name" value="{{ form.name }}" required {% if errors.name %}aria-invalid="true"{% endif %}>
         {% if errors.name %}<small class="error">{{ errors.name }}</small>{% endif %}
       </label>
-      <label>Merkez şehir
-        <input name="hq_city" value="{{ form.hq_city }}" required {% if errors.hq_city %}aria-invalid="true"{% endif %}>
-        {% if errors.hq_city %}<small class="error">{{ errors.hq_city }}</small>{% endif %}
-      </label>
+      {{ city_input("hq_city", "Merkez şehir", form.hq_city, errors.hq_city) }}
       <label>Ücret / mil ($)
         <input name="rate_per_mile" value="{{ form.rate_per_mile }}" inputmode="decimal" required
                {% if errors.rate_per_mile %}aria-invalid="true"{% endif %}>

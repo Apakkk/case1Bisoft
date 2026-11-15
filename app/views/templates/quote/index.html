@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_city_input.html" import city_input %}
 {% block title %}Teklif · Taşıyıcı Seçimi{% endblock %}
 {% block content %}
 <hgroup>
@@ -10,8 +11,8 @@
    Sipariş açıklamasında istenen firma varsa ve uygunsa önce o önerilir.</p>
 <form hx-post="/admin/quote" hx-target="#result">
   <div class="grid">
-    <label>Çıkış <input name="origin" value="Miami" required></label>
-    <label>Varış <input name="destination" value="Atlanta" required></label>
+    {{ city_input("origin", "Çıkış", "Miami") }}
+    {{ city_input("destination", "Varış", "Atlanta") }}
     <label>Konteyner
       <select name="container_size">
         <option value="">— açıklamadan —</option>

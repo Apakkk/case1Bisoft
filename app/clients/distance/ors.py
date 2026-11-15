@@ -1,14 +1,19 @@
 """OpenRouteService: geocoding and driving distance (https://openrouteservice.org)."""
 
+import re
 from decimal import Decimal
 from typing import Any, Protocol
 
 import httpx
 
 from app.clients.distance.cities import Coordinates
+from app.models.city import City
 
 METERS_PER_MILE = Decimal("1609.344")
 BASE_URL = "https://api.openrouteservice.org"
+AUTOCOMPLETE_PAGE_SIZE = 10  # ORS/Pelias returns at most this many; fewer means the list is complete
+AUTOCOMPLETE_TIMEOUT_SECONDS = 3.0  # suggestions are only useful while the user is still typing
+_OFFICIAL_PREFIX = re.compile(r"^(?:city|town|village|borough) of\s+", re.IGNORECASE)  # 'City of Boca Raton'
 
 
 class RoutingError(Exception):
@@ -18,6 +23,10 @@ class RoutingError(Exception):
 class RoutingClient(Protocol):
     def geocode(self, city: str) -> Coordinates | None: ...
     def driving_miles(self, origin: Coordinates, destination: Coordinates) -> Decimal: ...
+
+
+class PlaceSearch(Protocol):
+    def autocomplete(self, text: str) -> list[City]: ...
 
 
 class OrsClient:
@@ -36,6 +45,28 @@ class OrsClient:
             return None
         lon, lat = features[0]["geometry"]["coordinates"][:2]
         return (float(lat), float(lon))
+
+    def autocomplete(self, text: str) -> list[City]:
+        """US cities and towns whose name starts like `text` (layers=locality: no districts, streets or venues)."""
+        data = self._request(
+            "GET",
+            "/geocode/autocomplete",
+            params={"text": text, "boundary.country": "US", "layers": "locality"},
+            timeout=AUTOCOMPLETE_TIMEOUT_SECONDS,
+        )
+        cities = []
+        for feature in data.get("features") or []:
+            try:
+                properties = feature["properties"]
+                lon, lat = feature["geometry"]["coordinates"][:2]
+                name = _OFFICIAL_PREFIX.sub("", str(properties["name"]).strip())
+                state = str(properties.get("region_a") or "").strip()
+                city = City(name=name, state=state, lat=float(lat), lon=float(lon))
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue  # skip a malformed feature instead of losing the whole list
+            if name:
+                cities.append(city)
+        return cities
 
     def driving_miles(self, origin: Coordinates, destination: Coordinates) -> Decimal:
         # ORS expects [lon, lat] pairs.

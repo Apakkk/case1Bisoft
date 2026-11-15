@@ -1,0 +1,17 @@
+{# Rows of a city listbox. data-value is what goes into the input; the typed letters are bold. #}
+{%- for s in result.items %}
+{%- set before, hit, after = s.parts %}
+<li role="option" aria-selected="false" data-value="{{ s.name }}">
+  <span class="city-name">{{ before }}{% if hit %}<strong>{{ hit }}</strong>{% endif %}{{ after }}</span>
+  {%- if s.source == "ors" %}
+  <span class="city-tag" title="Harita servisinden (ORS) bulundu">ORS</span>
+  {%- endif %}
+  <span class="city-state">{{ s.state }}</span>
+</li>
+{%- endfor %}
+{%- if not result.items %}
+<li class="city-note" role="presentation">Öneri yok — yazdığınız şehir yine de kullanılabilir.</li>
+{%- endif %}
+{%- for warning in result.warnings %}
+<li class="city-note warn" role="presentation">{{ warning }}</li>
+{%- endfor %}

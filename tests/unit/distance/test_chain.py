@@ -8,7 +8,8 @@ import pytest
 from app.clients.distance.chain import DistanceProvider, DistanceSource, UnknownLocationError
 from app.clients.distance.cities import load_city_directory
 from app.clients.distance.static_table import load_static_table
-from tests.fakes import FakeRouting, InMemoryDistanceCache
+from app.models.city import City
+from tests.fakes import FakeRouting, InMemoryCityRepository, InMemoryDistanceCache
 
 TABLE = load_static_table(Path("config/distances.yaml"))
 CITIES = load_city_directory(Path("config/cities.csv"), Path("config/city_aliases.yaml"), TABLE.city_names())
@@ -85,3 +86,35 @@ def test_broken_cache_does_not_fail_the_lookup() -> None:
     result = provider(BrokenCache(), FakeRouting(miles=Decimal("281.4"))).miles("Tampa", "Miami")
 
     assert result.source is DistanceSource.ORS
+
+
+MCALLEN = City("McAllen", "TX", 26.2034, -98.2300)
+
+
+def test_a_stored_city_keeps_its_spelling_whatever_the_case() -> None:
+    distances = DistanceProvider(CITIES, TABLE, stored=InMemoryCityRepository([MCALLEN]))
+
+    assert distances.normalize("mcallen") == "McAllen"
+    assert distances.normalize("MCALLEN, tx") == "McAllen"
+    assert distances.normalize("orlando") == "Orlando"  # the catalog still wins
+    assert distances.normalize("springfield") == "Springfield"  # unknown everywhere: tidied as before
+
+
+def test_a_stored_city_needs_no_geocoding_request() -> None:
+    routing = FakeRouting(miles=Decimal("1386.0"))
+    distances = DistanceProvider(CITIES, TABLE, routing=routing, stored=InMemoryCityRepository([MCALLEN]))
+
+    result = distances.miles("Miami", "mcallen")
+
+    assert (result.miles, result.source) == (Decimal("1386.0"), DistanceSource.ORS)
+    assert routing.geocode_calls == []
+    assert routing.route_calls == [((25.7617, -80.1918), (26.2034, -98.2300))]
+
+
+def test_a_broken_city_table_falls_back_to_geocoding() -> None:
+    routing = FakeRouting(geocodes={"Mcallen": (26.2, -98.2)})
+    distances = DistanceProvider(CITIES, TABLE, routing=routing, stored=InMemoryCityRepository(fail=True))
+
+    assert distances.normalize("mcallen") == "Mcallen"
+    assert distances.miles("Miami", "mcallen").source is DistanceSource.ORS
+    assert routing.geocode_calls == ["Mcallen"]

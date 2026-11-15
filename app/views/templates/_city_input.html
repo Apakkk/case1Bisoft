@@ -1,0 +1,16 @@
+{# City input with a suggestion list (static/city-autocomplete.js + GET /admin/cities/suggest).
+   Picking from the list is optional: free text is validated by the services as before. #}
+{% macro city_input(name, label, value="", error=None) %}
+<div class="city-field">
+  <label for="{{ name }}-city">{{ label }}</label>
+  <div class="city-box">
+    <input id="{{ name }}-city" name="{{ name }}" value="{{ value }}" required
+           autocomplete="off" autocapitalize="words" spellcheck="false"
+           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="{{ name }}-city-list"
+           data-city-suggest="/admin/cities/suggest"
+           {% if error %}aria-invalid="true"{% endif %}>
+    <ul class="city-list" id="{{ name }}-city-list" role="listbox" aria-label="{{ label }} önerileri" hidden></ul>
+  </div>
+  {% if error %}<small class="error">{{ error }}</small>{% endif %}
+</div>
+{% endmacro %}

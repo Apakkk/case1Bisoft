@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.clients.distance.chain import DistanceProvider
-from app.clients.distance.cities import Coordinates, load_city_directory
+from app.clients.distance.cities import Coordinates, city_key, load_city_directory, match_tier
 from app.clients.distance.ors import RoutingError
 from app.clients.distance.static_table import load_static_table
 from app.clients.jev_client import (
@@ -18,6 +18,7 @@ from app.clients.jev_client import (
     OrderClassification,
 )
 from app.models.carrier import Carrier
+from app.models.city import City
 from app.models.order import Order
 from app.repositories.carrier_repository import DuplicateCarrierError
 from app.selection.rules import RuleSet
@@ -61,6 +62,51 @@ class FakeRouting:
         if self.fail:
             raise RoutingError("simulated outage")
         return self.miles
+
+
+class InMemoryCityRepository:
+    """Behaves like PostgresCityRepository: prefix/word-start search, case-insensitive find, first row wins."""
+
+    def __init__(self, cities: Iterable[City] = (), *, fail: bool = False) -> None:
+        self.rows: dict[str, City] = {}
+        for city in cities:
+            self.rows.setdefault(city_key(city.name), city)
+        self.fail = fail
+        self.find_calls: list[str] = []
+
+    def search(self, query_key: str, limit: int = 50) -> list[City]:
+        if self.fail:
+            raise RuntimeError("simulated database outage")
+        tiers = {key: match_tier(key, query_key) for key in self.rows}
+        matching = [key for key, tier in tiers.items() if tier is not None]
+        return [self.rows[key] for key in sorted(matching, key=lambda k: tiers[k] or 0)][:limit]
+
+    def find(self, name: str) -> City | None:
+        self.find_calls.append(name)
+        if self.fail:
+            raise RuntimeError("simulated database outage")
+        return self.rows.get(city_key(name))
+
+    def add(self, cities: Sequence[City]) -> None:
+        if self.fail:
+            raise RuntimeError("simulated database outage")
+        for city in cities:
+            self.rows.setdefault(city_key(city.name), city)
+
+
+class FakePlaces:
+    """Scripted ORS autocomplete: returns the configured cities that match the text, records every call."""
+
+    def __init__(self, cities: Iterable[City] = (), *, fail: bool = False) -> None:
+        self.cities = list(cities)
+        self.fail = fail
+        self.calls: list[str] = []
+
+    def autocomplete(self, text: str) -> list[City]:
+        self.calls.append(text)
+        if self.fail:
+            raise RoutingError("simulated outage")
+        return [c for c in self.cities if match_tier(city_key(c.name), city_key(text)) is not None]
 
 
 class InMemoryCarrierRepository:

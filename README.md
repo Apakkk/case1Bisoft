@@ -5,8 +5,9 @@ distance, ranking and the explanation are **deterministic code**. The TypeSafe *
 used only where the *data* is free text: it matches the order's description against each carrier's
 description (and fills order fields that were left empty).
 
-- REST API: `POST /api/v1/quotes` and `/api/v1/carriers` (Swagger at `/docs`)
-- Admin screen: carrier CRUD with an editable free-text description, a quote form and a rules page
+- REST API: `POST /api/v1/quotes`, `/api/v1/carriers` and `GET /api/v1/cities` (Swagger at `/docs`)
+- Admin screen: carrier CRUD with an editable free-text description, a quote form and a rules page;
+  every city input suggests US cities as you type
 - Rules in `config/rules.yaml`: putting price second is a click on `/admin/rules` (or a YAML edit), not code
 - The 7 orders from the case are tests (unit, service, API and end-to-end against PostgreSQL)
 
@@ -38,11 +39,13 @@ flowchart TB
   subgraph CV["Controllers and views"]
     QC["quote_controller<br/>POST /api/v1/quotes"]
     CC["carrier_api_controller<br/>/api/v1/carriers"]
+    YC["city_api_controller<br/>GET /api/v1/cities"]
     AC["admin controllers<br/>Jinja2 + HTMX"]
   end
   subgraph SV["Services"]
     QS[QuoteService]
     CS[CarrierService]
+    YS[CityService]
   end
   SEL["selection/ (pure)<br/>constraints · criteria · rank · explanation"]
   subgraph IF["Interfaces (fakes in tests)"]
@@ -50,23 +53,28 @@ flowchart TB
     JC[JevClient]
     CR[CarrierRepository]
     RS[RulesSource]
+    YR[CityRepository]
   end
   QC --> QS
   CC --> CS
-  AC --> QS & CS
+  YC --> YS
+  AC --> QS & CS & YS
   QS --> SEL
   QS --> DP & JC & CR & RS
   CS --> JC & CR & RS
+  YS --> YR & ORS
+  DP --> YR
   DP --> ORS[(OpenRouteService)]
   JC --> JEV[(Jev API)]
   CR --> PG[(PostgreSQL)]
+  YR --> PG
   RS --> YAML[(config/rules.yaml)]
 ```
 
 ```
 app/
   controllers/   HTTP + admin routes (thin)          views/       Jinja2 templates, form view-models
-  services/      QuoteService, CarrierService         selection/   pure rules: no I/O, mypy --strict
+  services/      Quote, Carrier, City services        selection/   pure rules: no I/O, mypy --strict
   repositories/  PostgreSQL (parametrized SQL), rules  clients/     Jev adapter, distance chain, ORS
   models/        domain dataclasses                   schemas/     Pydantic API DTOs
 config/          rules.yaml, distances.yaml (case table), cities.csv, city_aliases.yaml
@@ -152,12 +160,33 @@ labeled sample for the pinned model version.
 1. Same city → 0
 2. The case's table (`config/distances.yaml`, symmetric)
 3. PostgreSQL cache of earlier routing results (A–B and B–A share one row)
-4. OpenRouteService driving distance (if `ORS_API_KEY` is set); unknown cities are geocoded once
+4. OpenRouteService driving distance (if `ORS_API_KEY` is set). Coordinates come from `cities.csv`,
+   then the `cities` table (cities found by the suggestions below), and only then from ORS geocoding
 5. Haversine × 1.2 using `config/cities.csv`; flagged `approximate: true`
 6. Otherwise `422 UNKNOWN_LOCATION`
 
 HQ → origin distances (for the tie-break) use the same chain and are only looked up when more than
 one carrier is eligible. A carrier whose HQ cannot be located is ranked last with a warning.
+
+## City suggestions
+
+The HQ city, origin and destination inputs open a list of up to 5 cities while you type
+(`app/static/city-autocomplete.js`, a server-rendered list from `GET /admin/cities/suggest`):
+
+- Matching ignores case, dots and extra spaces (`orl`, `ORL`, `st. l`; a Turkish `İ` counts as `i`).
+  Names that start with the letters come first, then names with a later word that does (`lau` →
+  Fort **Lau**derdale). Letters in the middle of a word do not match, so `o` suggests Orlando, not Boston.
+- Catalog cities (`cities.csv` + aliases, alphabetical) come before cities found online (in
+  OpenRouteService's relevance order). The typed letters are bold; online ones carry an `ORS` tag.
+- Local first: the catalog and the `cities` table. OpenRouteService autocomplete
+  (`layers=locality`, US only: cities and towns, never districts, streets or venues) is asked only
+  when local matches fill fewer than 5 rows and at least 3 letters are typed. What it returns is
+  stored, so the same city comes from the database next time and needs no geocoding for a quote.
+- Quota guards: 250 ms debounce with the older request aborted, each query sent once per process, a
+  shorter query whose answer was complete covers longer ones, 3 s timeout, 60 s pause after a failure.
+- Up/Down move, Enter picks (an open list never submits the form), Escape closes. Picking is optional:
+  free text is validated exactly as before. If ORS is down or not configured, local cities are shown
+  with a note.
 
 ## API
 
@@ -166,6 +195,7 @@ one carrier is eligible. A carrier whose HQ cannot be located is ranked last wit
 | POST | `/api/v1/quotes` | Business outcomes (including "no carrier") are `200` with a `status` |
 | GET, POST | `/api/v1/carriers` | `409 DUPLICATE_CARRIER` for a duplicate name (case-insensitive) |
 | GET, PUT, DELETE | `/api/v1/carriers/{id}` | `404 CARRIER_NOT_FOUND` |
+| GET | `/api/v1/cities?q=orl&limit=5` | City suggestions `{"items": [{"name", "state", "source"}], "warnings": []}`; `limit` 1–10 |
 | GET | `/health` | Includes a database probe |
 
 Errors are `{"error": CODE, "detail": ...}`: `UNKNOWN_LOCATION`, `INVALID_ORDER`,
@@ -215,15 +245,15 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | Layer | What it checks | DB | Network | Jev |
 |---|---|---|---|---|
 | `tests/unit/selection` | The 7 case orders, inclusive limits (200/250/300), tie-breaks, ranking swap via config, rules validation, explanations | – | – | – |
-| `tests/unit/distance` | Normalization, case table, Haversine, chain order, ORS client (httpx MockTransport) | – | – | – |
-| `tests/unit/services` | Confidence bands, hazardous asymmetry, order/carrier compatibility, Jev outage, batching | – | – | fake |
+| `tests/unit/distance` | Normalization, case table, Haversine, chain order, city suggestion ranking, ORS client (httpx MockTransport) | – | – | – |
+| `tests/unit/services` | Confidence bands, hazardous asymmetry, order/carrier compatibility, Jev outage, batching, city suggestion quota guards | – | – | fake |
 | `tests/api` | REST endpoints and the admin screen over TestClient | fake | – | fake |
 | `tests/integration` | PostgreSQL repositories, CHECK constraints, the real app wiring | ✓ | – | – |
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 196 tests, no database/network/Jev, < 1 s
-make test-db     # 25 tests against the PostgreSQL container (each test rolls back)
+make test        # 251 tests, no database/network/Jev, < 2 s
+make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API
 ```
@@ -277,7 +307,7 @@ also the closest in every tie-free case). Adding a carrier based in the origin c
 
 **Add a criterion that needs a new carrier attribute** (e.g. a rating, higher is better):
 
-1. `db/migrations/001_add_rating.sql`:
+1. `db/migrations/002_add_rating.sql`:
    `ALTER TABLE carriers ADD COLUMN IF NOT EXISTS rating NUMERIC(2,1) NOT NULL DEFAULT 3.0;`
    then `make migrate` (keeps the data; never `make reset-db` during a demo).
 2. Add `rating` to `Carrier`, the repository's column list, `CarrierIn`/`CarrierOut` and the form.
@@ -299,7 +329,7 @@ also the closest in every tie-free case). Adding a carrier based in the origin c
 | `TYPESAFE_API_KEY` | – | Jev. Without it, free text asks for input and restrictive notes need review |
 | `JEV_MODEL` | SDK default `jev-latest` | Pin a version once thresholds are tuned |
 | `JEV_TIMEOUT_SECONDS` | `5` | Per request; one retry |
-| `ORS_API_KEY` | – | OpenRouteService; without it off-table routes use Haversine |
+| `ORS_API_KEY` | – | OpenRouteService; without it off-table routes use Haversine and city suggestions stay local |
 | `RULES_PATH` | `config/rules.yaml` | |
 
 ## Decisions
@@ -308,7 +338,7 @@ also the closest in every tie-free case). Adding a carrier based in the origin c
   from one model; `Decimal` is in the standard library.
 - **Filter + lexicographic ranking** instead of a weighted score: the case gives rules in priority
   order, and a weighted score would let proximity outweigh a cheaper price.
-- **PostgreSQL + parametrized SQL** (psycopg 3, no ORM): two small tables; `NUMERIC` money and
+- **PostgreSQL + parametrized SQL** (psycopg 3, no ORM): three small tables; `NUMERIC` money and
   `CHECK` constraints as a safety net behind service validation.
 - **Server-rendered Jinja2 + HTMX**: no build step, one process, the same services as the API.
 - **Jev never picks the carrier**: the rule is deterministic; a probabilistic choice could be neither
@@ -324,6 +354,9 @@ also the closest in every tie-free case). Adding a carrier based in the origin c
   field, because Jev does not do arithmetic.
 - Order and carrier descriptions are sent to the Jev API; they should not contain confidential data.
 - City names are matched to the first entry in `cities.csv` (e.g. Portland is Portland, OR);
-  geocoding is limited to the US.
+  geocoding is limited to the US. Cities are known by name only, so the `cities` table keeps one row
+  per name (the first one found: Springfield, IL).
+- ORS's locality layer includes census-designated places, so `boca` also suggests communities next to
+  Boca Raton (Boca West, Boca Pointe). They are real places with coordinates and rank after the city.
 - The distance cache never expires (road distances rarely change).
 - The admin screen has no authentication.

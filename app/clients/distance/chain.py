@@ -1,5 +1,7 @@
 """Distance chain: same city -> case table -> cache -> OpenRouteService -> Haversine x factor.
 
+Coordinates: catalog (cities.csv) -> `cities` table (found earlier via ORS) -> ORS geocoding.
+
 Distances are never estimated by a model. Only the Haversine tier is approximate, and it says so.
 """
 
@@ -13,6 +15,7 @@ from app.clients.distance.cities import CityDirectory, Coordinates
 from app.clients.distance.haversine import haversine_miles
 from app.clients.distance.ors import RoutingClient, RoutingError
 from app.clients.distance.static_table import StaticDistanceTable
+from app.models.city import City
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,12 @@ class DistanceCache(Protocol):
     def put(self, a: str, b: str, miles: Decimal, source: str) -> None: ...
 
 
+class StoredCities(Protocol):
+    """Cities found earlier through the routing service (the `cities` table)."""
+
+    def find(self, name: str) -> City | None: ...
+
+
 class DistanceProvider:
     def __init__(
         self,
@@ -56,15 +65,23 @@ class DistanceProvider:
         table: StaticDistanceTable,
         cache: DistanceCache | None = None,
         routing: RoutingClient | None = None,
+        stored: StoredCities | None = None,
     ) -> None:
         self._cities = cities
         self._table = table
         self._cache = cache
         self._routing = routing
+        self._stored = stored
         self._geocoded: dict[str, Coordinates | None] = {}
 
     def normalize(self, city: str) -> str:
-        return self._cities.normalize(city)
+        """Catalog name, else the stored spelling ('mcallen' -> 'McAllen'), else the tidied input."""
+        known = self._cities.lookup(city)
+        if known is not None:
+            return known
+        tidy = self._cities.normalize(city)
+        stored = self._find_stored(tidy)
+        return stored.name if stored is not None else tidy
 
     def miles(self, a: str, b: str, *, approximate_factor: Decimal = Decimal("1.2")) -> DistanceResult:
         a, b = self.normalize(a), self.normalize(b)
@@ -103,7 +120,8 @@ class DistanceProvider:
         if known is not None:
             return known
         if city not in self._geocoded:
-            self._geocoded[city] = self._geocode(city)
+            stored = self._find_stored(city)
+            self._geocoded[city] = (stored.lat, stored.lon) if stored is not None else self._geocode(city)
         found = self._geocoded[city]
         if found is None:
             raise UnknownLocationError(city)
@@ -116,6 +134,15 @@ class DistanceProvider:
             return self._routing.geocode(city)
         except RoutingError as error:
             logger.warning("geocoding failed for %s: %s", city, error)
+            return None
+
+    def _find_stored(self, city: str) -> City | None:
+        if self._stored is None:
+            return None
+        try:
+            return self._stored.find(city)
+        except Exception:  # a broken table must never fail a quote; geocoding still works
+            logger.exception("city table read failed")
             return None
 
     def _cache_get(self, a: str, b: str) -> Decimal | None:

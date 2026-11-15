@@ -10,6 +10,7 @@ from psycopg.rows import DictRow, dict_row
 
 from app.config import get_settings
 from app.repositories.carrier_repository import PostgresCarrierRepository
+from app.repositories.city_repository import PostgresCityRepository
 from app.repositories.distance_cache_repository import PostgresDistanceCache
 
 
@@ -33,3 +34,8 @@ def carriers(conn: Connection[DictRow]) -> PostgresCarrierRepository:
 @pytest.fixture
 def distance_cache(conn: Connection[DictRow]) -> PostgresDistanceCache:
     return PostgresDistanceCache(lambda: nullcontext(conn))
+
+
+@pytest.fixture
+def cities(conn: Connection[DictRow]) -> PostgresCityRepository:
+    return PostgresCityRepository(lambda: nullcontext(conn))

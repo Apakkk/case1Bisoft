@@ -11,6 +11,8 @@ from app.config import get_settings
 from app.controllers import (
     carrier_admin_controller,
     carrier_api_controller,
+    city_admin_controller,
+    city_api_controller,
     health_controller,
     quote_admin_controller,
     quote_controller,
@@ -45,9 +47,11 @@ def create_app() -> FastAPI:
     app.include_router(health_controller.router)
     app.include_router(quote_controller.router)
     app.include_router(carrier_api_controller.router)
+    app.include_router(city_api_controller.router)
     app.include_router(carrier_admin_controller.router)
     app.include_router(quote_admin_controller.router)
     app.include_router(rules_admin_controller.router)
+    app.include_router(city_admin_controller.router)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

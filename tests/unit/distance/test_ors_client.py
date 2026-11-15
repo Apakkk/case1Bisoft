@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.clients.distance.ors import BASE_URL, OrsClient, RoutingError
+from app.models.city import City
 
 
 def client(handler: httpx.MockTransport) -> OrsClient:
@@ -50,3 +51,53 @@ def test_http_errors_become_routing_errors(status: int) -> None:
 
     with pytest.raises(RoutingError):
         client(httpx.MockTransport(handle)).driving_miles((0, 0), (1, 1))
+
+
+def feature(name: str, state: str | None, lon: float, lat: float) -> dict[str, object]:
+    properties: dict[str, object] = {"name": name, "label": f"{name}, {state}, USA"}
+    if state is not None:
+        properties["region_a"] = state
+    return {"properties": properties, "geometry": {"coordinates": [lon, lat]}}
+
+
+def test_autocomplete_asks_for_us_cities_only_and_reads_name_state_coordinates() -> None:
+    seen: dict[str, str] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.update(request.url.params)
+        seen["path"] = request.url.path
+        features = [feature("Orlando", "FL", -81.3792, 28.5383), feature("Orland Park", "IL", -87.85, 41.63)]
+        return httpx.Response(200, json={"features": features})
+
+    cities = client(httpx.MockTransport(handle)).autocomplete("orl")
+
+    assert seen["path"] == "/geocode/autocomplete"
+    assert (seen["text"], seen["boundary.country"], seen["layers"]) == ("orl", "US", "locality")
+    assert cities == [City("Orlando", "FL", 28.5383, -81.3792), City("Orland Park", "IL", 41.63, -87.85)]
+
+
+def test_autocomplete_skips_malformed_features_and_tolerates_a_missing_state() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        broken = {"properties": {"name": "Broken"}}  # no geometry
+        features = [broken, feature("", "FL", 0, 0), feature("Boca Raton", None, -80.1, 26.4)]
+        return httpx.Response(200, json={"features": features})
+
+    assert client(httpx.MockTransport(handle)).autocomplete("boca") == [City("Boca Raton", "", 26.4, -80.1)]
+
+
+def test_autocomplete_errors_become_routing_errors() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "quota"})
+
+    with pytest.raises(RoutingError):
+        client(httpx.MockTransport(handle)).autocomplete("boca")
+
+
+def test_autocomplete_drops_the_official_prefix() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        features = [feature("City of Boca Raton", "FL", -80.1, 26.4), feature("Town of Palm Beach", "FL", -80.0, 26.7)]
+        return httpx.Response(200, json={"features": features})
+
+    names = [c.name for c in client(httpx.MockTransport(handle)).autocomplete("boca")]
+
+    assert names == ["Boca Raton", "Palm Beach"]
