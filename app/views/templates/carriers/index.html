@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Firmalar · Taşıyıcı Seçimi{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Taşıyıcı firmalar</h2>
+  <p>Firma açıklaması serbest metindir; kaydedilirken Jev kısıt içerip içermediğini kontrol eder.</p>
+</hgroup>
+
+<table>
+  <thead>
+    <tr>
+      <th>Firma</th><th>Merkez</th><th>Mesafe</th><th>Konteyner</th><th>Yük tipi</th>
+      <th>Ücret/mil</th><th>Açıklama</th><th></th>
+    </tr>
+  </thead>
+  {% include "carriers/_rows.html" %}
+</table>
+
+<button hx-get="/admin/carriers/new" hx-target="#editor">+ Yeni firma</button>
+<section id="editor"></section>
+{% endblock %}

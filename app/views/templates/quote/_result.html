@@ -1,0 +1,69 @@
+{% set badges = {
+  "selected": ("ok", "Seçildi"),
+  "needs_review": ("warn", "Manuel onay gerekli"),
+  "needs_input": ("info", "Bilgi gerekli"),
+  "no_carrier": ("bad", "Uygun firma yok"),
+} %}
+<article>
+  {% if error %}
+    <header><span class="badge bad">Hata</span> <code>{{ error.code }}</code></header>
+    <p>{{ error.detail }}</p>
+  {% else %}
+    {% set badge = badges[q.status] %}
+    <header>
+      <span class="badge {{ badge[0] }}">{{ badge[1] }}</span>
+      {% if q.carrier %}<strong>{{ q.carrier }}</strong> · {{ q.total_cost | money }}{% endif %}
+      {% if q.distance %}
+        <span class="muted">· {{ q.distance.miles | miles }} mil ({{ q.distance.source }}{% if q.distance.approximate %}, yaklaşık{% endif %})</span>
+      {% endif %}
+    </header>
+
+    <pre class="explanation">{{ q.explanation }}</pre>
+
+    {% if q.warnings %}
+      <h6>Uyarılar</h6>
+      <ul>{% for w in q.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if q.ranking %}
+      <h6>Uygun firmalar (sıralı)</h6>
+      <table>
+        <thead><tr><th>#</th><th>Firma</th><th>Toplam</th><th>Merkez → çıkış</th></tr></thead>
+        <tbody>
+        {% for r in q.ranking %}
+          <tr><td>{{ loop.index }}</td><td>{{ r.carrier }}</td><td>{{ r.total_cost | money }}</td>
+              <td>{% if r.hq_distance_miles is not none %}{{ r.hq_distance_miles | miles }} mil{% else %}—{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if q.rejected %}
+      <h6>Elenenler</h6>
+      <ul>{% for r in q.rejected %}<li><strong>{{ r.carrier }}</strong>: {{ r.reasons | join("; ") }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    <h6>Jev çağrıları</h6>
+    {% if q.jev_calls %}
+      <table>
+        <thead><tr><th>Adım</th><th>Konu</th><th>Cevap</th><th>Güven / olasılık</th><th>ms</th></tr></thead>
+        <tbody>
+        {% for j in q.jev_calls %}
+          <tr><td><code>{{ j.step }}</code></td><td>{{ j.subject }}</td><td>{{ j.answer }}</td>
+              <td>{{ "%.3f" | format(j.confidence) }}</td><td>{{ j.elapsed_ms }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Bu siparişte Jev çağrılmadı: girdi yapılandırılmıştı ve firma notları kısıt içermiyordu.</p>
+    {% endif %}
+
+    <details>
+      <summary class="muted">Yorumlanan sipariş</summary>
+      <p class="muted">{{ q.order.origin }} → {{ q.order.destination }} ·
+        {{ q.order.container_size or "?" }} ft · {{ q.order.cargo_type or "?" }}
+        {% if q.order.inferred %}· çıkarılan: {% for k, v in q.order.inferred.items() %}{{ k }} ({{ v }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
+      </p>
+    </details>
+  {% endif %}
+</article>

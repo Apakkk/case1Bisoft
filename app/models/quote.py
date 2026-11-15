@@ -1,0 +1,31 @@
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+class QuoteStatus(StrEnum):
+    SELECTED = "selected"  # carrier chosen, nothing uncertain
+    NEEDS_REVIEW = "needs_review"  # carrier chosen, but something uncertain needs a human look
+    NEEDS_INPUT = "needs_input"  # order too ambiguous to decide; no carrier chosen
+    NO_CARRIER = "no_carrier"  # every carrier fails a constraint (reasons included)
+
+
+@dataclass(frozen=True, slots=True)
+class JevCall:
+    """One answer from Jev, kept in the response so every model influence is visible."""
+
+    step: str  # cargo_type | hazardous | note_check | note_precheck
+    subject: str  # what was asked about (e.g. carrier name)
+    answer: str  # chosen label or "yes"/"no"
+    confidence: float  # choice confidence, or P(yes) for yes/no questions
+    elapsed_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedOrder:
+    """The order after normalization; fields may still be None when they could not be resolved."""
+
+    origin: str
+    destination: str
+    container_size: int | None
+    cargo_type: str | None
+    inferred: dict[str, str] = field(default_factory=dict)  # field -> "text" (regex) | "jev"

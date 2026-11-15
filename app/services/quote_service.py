@@ -1,0 +1,287 @@
+"""Quote flow: resolve order -> distance -> filter -> HQ distances -> rank -> note gate -> status -> explanation.
+
+Business rules live in app/selection (pure). Jev is consulted only where the *data* is ambiguous:
+free-text cargo descriptions and free-text carrier notes. Low confidence never becomes a guess:
+it becomes `needs_review` or `needs_input`.
+"""
+
+from dataclasses import dataclass, field
+from decimal import Decimal
+
+from app.clients.distance.chain import DistanceProvider, DistanceResult, UnknownLocationError
+from app.clients.jev_client import ChoiceResult, JevClient, JevUnavailableError
+from app.models.carrier import Carrier, NoteStatus
+from app.models.order import Order
+from app.models.quote import JevCall, QuoteStatus, ResolvedOrder
+from app.repositories.carrier_repository import CarrierRepository
+from app.repositories.rules_repository import RulesSource
+from app.schemas.quote import QuoteRequest
+from app.selection.engine import boundary_warnings, filter_carriers, needs_hq_distance, rank, with_hq_distances
+from app.selection.explanation import Outcome, explain
+from app.selection.order_text import parse_container_size
+from app.selection.rules import RuleSet
+from app.selection.types import Candidate, Rejection
+
+HAZARDOUS = "Hazardous"
+_FIELD_LABELS = {"container_size": "konteyner ölçüsü", "cargo_type": "yük tipi"}
+
+
+class InvalidOrderError(ValueError):
+    """The order contradicts the catalog or misses required data (HTTP 422)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Quote:
+    status: QuoteStatus
+    order: ResolvedOrder
+    selected: Candidate | None
+    distance: DistanceResult | None
+    ranking: tuple[Candidate, ...]
+    rejected: tuple[Rejection, ...]
+    jev_calls: tuple[JevCall, ...]
+    warnings: tuple[str, ...]
+    explanation: str
+
+
+@dataclass
+class _Trace:
+    """Per-request record of Jev answers, warnings and whether a human must review the result."""
+
+    jev_calls: list[JevCall] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    review: bool = False
+
+    def flag(self, warning: str) -> None:
+        self.warnings.append(warning)
+        self.review = True
+
+
+class QuoteService:
+    def __init__(
+        self,
+        carriers: CarrierRepository,
+        distances: DistanceProvider,
+        rules: RulesSource,
+        jev: JevClient | None = None,
+    ) -> None:
+        self._carriers = carriers
+        self._distances = distances
+        self._rules = rules
+        self._jev = jev
+
+    def quote(self, request: QuoteRequest) -> Quote:
+        rules = self._rules.get()
+        trace = _Trace()
+        resolved = self._resolve_order(request, rules, trace)
+        if resolved.container_size is None or resolved.cargo_type is None:
+            return self._needs_input(resolved, trace)
+
+        order = Order(resolved.origin, resolved.destination, resolved.container_size, resolved.cargo_type)
+        distance = self._distances.miles(
+            order.origin, order.destination, approximate_factor=rules.distance.approximate_factor
+        )
+        trace.warnings.extend(distance.warnings)
+        carriers = self._carriers.list()
+        filtered = filter_carriers(carriers, order, distance.miles, rules)
+
+        candidates = filtered.eligible
+        if len(candidates) > 1 and needs_hq_distance(rules):  # a single candidate needs no tie-break
+            hq = {c.carrier.name: self._hq_distance(c.carrier, order.origin, rules, trace) for c in candidates}
+            candidates = with_hq_distances(candidates, hq)
+        ranked, note_rejections = self._note_gate(order, rank(candidates, rules), rules, trace)
+
+        if distance.approximate:
+            for warning in boundary_warnings(carriers, distance.miles, rules.distance.boundary_warning_ratio):
+                trace.flag(warning)
+
+        selected = ranked[0] if ranked else None
+        if selected is None:
+            status = QuoteStatus.NO_CARRIER
+        else:
+            status = QuoteStatus.NEEDS_REVIEW if trace.review else QuoteStatus.SELECTED
+
+        rejected = (*filtered.rejected, *note_rejections)
+        outcome = Outcome(order, distance.miles, distance.approximate, ranked, rejected, selected)
+        return Quote(
+            status=status,
+            order=resolved,
+            selected=selected,
+            distance=distance,
+            ranking=ranked,
+            rejected=rejected,
+            jev_calls=tuple(trace.jev_calls),
+            warnings=tuple(trace.warnings),
+            explanation=explain(outcome, rules),
+        )
+
+    # --- order interpretation -------------------------------------------------------------
+
+    def _resolve_order(self, request: QuoteRequest, rules: RuleSet, trace: _Trace) -> ResolvedOrder:
+        text = (request.cargo_description or "").strip()
+        if (request.container_size is None or request.cargo_type is None) and not text:
+            raise InvalidOrderError("send container_size and cargo_type, or describe the cargo in cargo_description")
+
+        inferred: dict[str, str] = {}
+        size = request.container_size
+        if size is not None and size not in rules.container_sizes:
+            allowed = ", ".join(map(str, rules.container_sizes))
+            raise InvalidOrderError(f"container_size {size} is not in the catalog ({allowed})")
+        if size is None:
+            size = parse_container_size(text, rules.container_sizes)  # deterministic first
+            if size is not None:
+                inferred["container_size"] = "text"
+
+        cargo: str | None = None
+        if request.cargo_type is not None:
+            cargo = rules.canonical_cargo_type(request.cargo_type)
+            if cargo is None:
+                raise InvalidOrderError(
+                    f"cargo_type '{request.cargo_type}' is not in the catalog ({', '.join(rules.cargo_types)})"
+                )
+
+        if size is None or cargo is None:
+            jev_size, jev_cargo = self._interpret(
+                text, rules, need_size=size is None, need_cargo=cargo is None, trace=trace
+            )
+            if size is None and jev_size is not None:
+                size, inferred["container_size"] = jev_size, "jev"
+            if cargo is None and jev_cargo is not None:
+                cargo, inferred["cargo_type"] = jev_cargo, "jev"
+
+        return ResolvedOrder(
+            origin=self._distances.normalize(request.origin),
+            destination=self._distances.normalize(request.destination),
+            container_size=size,
+            cargo_type=cargo,
+            inferred=inferred,
+        )
+
+    def _interpret(
+        self, text: str, rules: RuleSet, *, need_size: bool, need_cargo: bool, trace: _Trace
+    ) -> tuple[int | None, str | None]:
+        if self._jev is None:
+            trace.warnings.append("Jev yapılandırılmamış; serbest metin yorumlanamadı.")
+            return None, None
+        try:
+            result = self._jev.classify_order(
+                text,
+                rules.cargo_types if need_cargo else None,
+                rules.container_sizes if need_size else None,
+            )
+        except JevUnavailableError:
+            trace.warnings.append("Jev'e ulaşılamadı; serbest metin yorumlanamadı.")
+            return None, None
+
+        cargo = self._accept("cargo_type", result.cargo_type, result.elapsed_ms, text, rules, trace)
+        size_label = self._accept("container_size", result.container_size, result.elapsed_ms, text, rules, trace)
+
+        if result.cargo_type is not None and cargo is not None and cargo != HAZARDOUS:
+            p_hazardous = result.cargo_type.probabilities.get(HAZARDOUS, 0.0)
+            if p_hazardous >= rules.confidence.hazardous_review:
+                trace.flag(
+                    f"Tehlikeli yük olasılığı {p_hazardous:.2f} (eşik {rules.confidence.hazardous_review:.2f}); "
+                    "manuel inceleme gerekli."
+                )
+        return (int(size_label) if size_label is not None else None), cargo
+
+    def _accept(
+        self, name: str, choice: ChoiceResult | None, elapsed_ms: int, text: str, rules: RuleSet, trace: _Trace
+    ) -> str | None:
+        """Apply the confidence bands: accept, accept-with-review, or refuse to guess."""
+        if choice is None:
+            return None
+        trace.jev_calls.append(JevCall(name, _short(text), choice.choice, round(choice.confidence, 3), elapsed_ms))
+        label, bands = _FIELD_LABELS[name], rules.confidence
+        if choice.confidence >= bands.auto_accept:
+            return choice.choice
+        if choice.confidence >= bands.needs_review:
+            trace.flag(
+                f"{label.capitalize()} Jev ile düşük güvenle belirlendi ({choice.choice}, güven "
+                f"{choice.confidence:.2f}); manuel onay gerekli."
+            )
+            return choice.choice
+        trace.warnings.append(
+            f"{label.capitalize()} için Jev güveni çok düşük ({choice.choice}?, güven {choice.confidence:.2f}); "
+            "tahmin edilmedi."
+        )
+        return None
+
+    def _needs_input(self, order: ResolvedOrder, trace: _Trace) -> Quote:
+        missing = [label for name, label in _FIELD_LABELS.items() if getattr(order, name) is None]
+        return Quote(
+            status=QuoteStatus.NEEDS_INPUT,
+            order=order,
+            selected=None,
+            distance=None,
+            ranking=(),
+            rejected=(),
+            jev_calls=tuple(trace.jev_calls),
+            warnings=tuple(trace.warnings),
+            explanation=f"Firma seçilmedi: {' ve '.join(missing)} belirlenemedi. Lütfen açıkça belirtin.",
+        )
+
+    # --- carrier notes -------------------------------------------------------------------
+
+    def _note_gate(
+        self, order: Order, ranked: tuple[Candidate, ...], rules: RuleSet, trace: _Trace
+    ) -> tuple[tuple[Candidate, ...], tuple[Rejection, ...]]:
+        """Notes can only narrow: a note Jev is sure about removes the carrier; an unsure one needs review."""
+        notes = {
+            c.carrier.name: c.carrier.description
+            for c in ranked
+            if c.carrier.note_status is not NoteStatus.NONE and c.carrier.description
+        }
+        if not notes:
+            return ranked, ()
+        if self._jev is None:
+            trace.flag(f"Firma notları kontrol edilemedi (Jev yapılandırılmamış): {', '.join(notes)}.")
+            return ranked, ()
+        try:
+            check = self._jev.notes_block_order(order, notes)
+        except JevUnavailableError:
+            trace.flag(f"Jev'e ulaşılamadı; firma notları kontrol edilmedi: {', '.join(notes)}.")
+            return ranked, ()
+
+        block_at = rules.confidence.auto_accept
+        allow_at = 1 - block_at
+        remaining: list[Candidate] = []
+        rejections: list[Rejection] = []
+        uncertain: dict[str, float] = {}
+        for candidate in ranked:
+            name = candidate.carrier.name
+            p = check.block_probability.get(name)
+            if p is None:
+                remaining.append(candidate)
+                continue
+            answer = "blocks" if p >= 0.5 else "allows"
+            trace.jev_calls.append(JevCall("note_check", name, answer, round(p, 3), check.elapsed_ms))
+            if p >= block_at:
+                reason = f'Firma notu bu siparişi engelliyor: "{_short(notes[name])}" (Jev, olasılık {p:.2f})'
+                rejections.append(Rejection(name, (reason,)))
+                continue
+            if p > allow_at:
+                uncertain[name] = p
+            remaining.append(candidate)
+
+        if remaining and remaining[0].carrier.name in uncertain:
+            top = remaining[0].carrier.name
+            trace.flag(
+                f"{top} notunun bu siparişe etkisi belirsiz (engelleme olasılığı {uncertain[top]:.2f}); "
+                "manuel onay gerekli."
+            )
+        return tuple(remaining), tuple(rejections)
+
+    def _hq_distance(self, carrier: Carrier, origin: str, rules: RuleSet, trace: _Trace) -> Decimal | None:
+        try:
+            return self._distances.miles(
+                carrier.hq_city, origin, approximate_factor=rules.distance.approximate_factor
+            ).miles
+        except UnknownLocationError:
+            trace.warnings.append(
+                f"{carrier.name} merkezi ({carrier.hq_city}) bulunamadı; yakınlık kriterinde sona alındı."
+            )
+            return None
+
+
+def _short(text: str, limit: int = 80) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"

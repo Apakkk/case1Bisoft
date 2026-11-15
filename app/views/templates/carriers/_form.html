@@ -1,0 +1,59 @@
+{# New or edit form. Server-side validation only: the same CarrierService as the JSON API. #}
+<article>
+  <header><strong>{% if carrier_id %}Firmayı düzenle{% else %}Yeni firma{% endif %}</strong></header>
+  {% if errors.get("_") %}<p class="error">{{ errors["_"] }}</p>{% endif %}
+  <form {% if carrier_id %}hx-put="/admin/carriers/{{ carrier_id }}"{% else %}hx-post="/admin/carriers"{% endif %}
+        hx-target="#editor">
+    <div class="grid">
+      <label>Firma adı
+        <input name="name" value="{{ form.name }}" required {% if errors.name %}aria-invalid="true"{% endif %}>
+        {% if errors.name %}<small class="error">{{ errors.name }}</small>{% endif %}
+      </label>
+      <label>Merkez şehir
+        <input name="hq_city" value="{{ form.hq_city }}" required {% if errors.hq_city %}aria-invalid="true"{% endif %}>
+        {% if errors.hq_city %}<small class="error">{{ errors.hq_city }}</small>{% endif %}
+      </label>
+      <label>Ücret / mil ($)
+        <input name="rate_per_mile" value="{{ form.rate_per_mile }}" inputmode="decimal" required
+               {% if errors.rate_per_mile %}aria-invalid="true"{% endif %}>
+        {% if errors.rate_per_mile %}<small class="error">{{ errors.rate_per_mile }}</small>{% endif %}
+      </label>
+    </div>
+    <div class="grid">
+      <label>Min mesafe (mil) <span class="muted">boş = sınırsız</span>
+        <input name="min_miles" value="{{ form.min_miles }}" inputmode="decimal"
+               {% if errors.min_miles %}aria-invalid="true"{% endif %}>
+        {% if errors.min_miles %}<small class="error">{{ errors.min_miles }}</small>{% endif %}
+      </label>
+      <label>Max mesafe (mil) <span class="muted">boş = sınırsız</span>
+        <input name="max_miles" value="{{ form.max_miles }}" inputmode="decimal"
+               {% if errors.max_miles %}aria-invalid="true"{% endif %}>
+        {% if errors.max_miles %}<small class="error">{{ errors.max_miles }}</small>{% endif %}
+      </label>
+    </div>
+    <fieldset class="inline">
+      <legend>Konteyner (ft)</legend>
+      {% for size in catalog.container_sizes %}
+        <label><input type="checkbox" name="container_sizes" value="{{ size }}"
+               {% if size|string in form.container_sizes %}checked{% endif %}> {{ size }}</label>
+      {% endfor %}
+      {% if errors.container_sizes %}<small class="error">{{ errors.container_sizes }}</small>{% endif %}
+    </fieldset>
+    <fieldset class="inline">
+      <legend>Yük tipi</legend>
+      {% for cargo in catalog.cargo_types %}
+        <label><input type="checkbox" name="cargo_types" value="{{ cargo }}"
+               {% if cargo in form.cargo_types %}checked{% endif %}> {{ cargo }}</label>
+      {% endfor %}
+      {% if errors.cargo_types %}<small class="error">{{ errors.cargo_types }}</small>{% endif %}
+    </fieldset>
+    <label>Açıklama <span class="muted">serbest metin; ör. "Şu an tehlikeli yük kabul etmiyoruz."</span>
+      <textarea name="description" rows="3">{{ form.description }}</textarea>
+      {% if errors.description %}<small class="error">{{ errors.description }}</small>{% endif %}
+    </label>
+    <div class="actions">
+      <button type="submit">Kaydet</button>
+      <button type="button" class="secondary outline" hx-get="/admin/carriers/editor/close" hx-target="#editor">Vazgeç</button>
+    </div>
+  </form>
+</article>

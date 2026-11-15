@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Taşıyıcı Seçimi{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='pico.min.css') }}">
+  <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
+  <style>
+    :root { --pico-font-size: 95%; }
+    nav { border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1.5rem; }
+    table td, table th { vertical-align: top; }
+    .badge { display: inline-block; padding: .1rem .5rem; border-radius: 1rem; font-size: .8rem; white-space: nowrap; }
+    .badge.ok { background: #e3f5e8; color: #1d6b34; }
+    .badge.warn { background: #fff3d6; color: #8a5a00; }
+    .badge.bad { background: #fde4e4; color: #9b1c1c; }
+    .badge.info { background: #e6eefc; color: #1f4fa3; }
+    .muted { color: var(--pico-muted-color); font-size: .85rem; }
+    .error { color: #b42318; font-size: .85rem; margin-top: -.6rem; margin-bottom: .8rem; display: block; }
+    .actions { display: flex; gap: .4rem; }
+    .actions button { padding: .25rem .6rem; margin: 0; font-size: .85rem; }
+    fieldset.inline label { display: inline-flex; margin-right: 1rem; }
+    .htmx-request { opacity: .6; transition: opacity .2s; }
+    pre.explanation { white-space: pre-wrap; font-family: inherit; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <nav>
+      <ul><li><strong>Taşıyıcı Seçimi</strong></li></ul>
+      <ul>
+        <li><a href="/admin/carriers">Firmalar</a></li>
+        <li><a href="/admin/quote">Teklif</a></li>
+        <li><a href="/docs">API</a></li>
+      </ul>
+    </nav>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

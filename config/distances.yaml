@@ -1,0 +1,9 @@
+# Road distances from the case, in miles. Symmetric: A-B is also B-A.
+# First tier of the distance chain: deterministic, free, and the source of the case tests.
+- [Miami, Fort Lauderdale, 30]
+- [Miami, Orlando, 235]
+- [Miami, Atlanta, 660]
+- [Jacksonville, Savannah, 140]
+- [Tampa, Jacksonville, 200]
+- [Miami, Houston, 1190]
+- [Tampa, Orlando, 85]

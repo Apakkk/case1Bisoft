@@ -1,0 +1,10 @@
+# Alternative spellings -> canonical city name. Lookup ignores case, dots and extra spaces,
+# and a trailing two-letter state code ("Miami, FL") is dropped before the lookup.
+Ft Lauderdale: Fort Lauderdale
+Ft. Lauderdale: Fort Lauderdale
+Jax: Jacksonville
+NYC: New York
+New York City: New York
+LA: Los Angeles
+Washington DC: Washington
+Saint Louis: St. Louis

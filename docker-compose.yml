@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-carrier}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-carrier}
+      POSTGRES_DB: ${POSTGRES_DB:-carrier}
+    ports:
+      # 5433 on the host so a locally installed PostgreSQL on 5432 does not clash.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs once, when the volume is empty: schema, then seed.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false # API keys (TYPESAFE_API_KEY, ORS_API_KEY); the app runs without them
+    environment:
+      # Inside the compose network the database is "db" on its container port.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-carrier}:${POSTGRES_PASSWORD:-carrier}@db:5432/${POSTGRES_DB:-carrier}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Live demo: edit config/rules.yaml on the host; the app re-reads it on the next request.
+      - ./config:/app/config:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

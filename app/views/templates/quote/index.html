@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Teklif · Taşıyıcı Seçimi{% endblock %}
+{% block content %}
+<hgroup>
+  <h2>Teklif al</h2>
+  <p><code>POST /api/v1/quotes</code> ile aynı servis. Konteyner veya yük tipi boş bırakılırsa açıklamadan çıkarılır
+     (önce kural, gerekirse Jev).</p>
+</hgroup>
+<form hx-post="/admin/quote" hx-target="#result">
+  <div class="grid">
+    <label>Çıkış <input name="origin" value="Miami" required></label>
+    <label>Varış <input name="destination" value="Atlanta" required></label>
+    <label>Konteyner
+      <select name="container_size">
+        <option value="">— açıklamadan —</option>
+        {% for size in catalog.container_sizes %}<option value="{{ size }}" {% if size == 20 %}selected{% endif %}>{{ size }} ft</option>{% endfor %}
+      </select>
+    </label>
+    <label>Yük tipi
+      <select name="cargo_type">
+        <option value="">— açıklamadan —</option>
+        {% for cargo in catalog.cargo_types %}<option value="{{ cargo }}" {% if cargo == "Reefer" %}selected{% endif %}>{{ cargo }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <label>Yük açıklaması <span class="muted">opsiyonel; ör. "20'lik konteynerde donmuş karides"</span>
+    <textarea name="cargo_description" rows="2"></textarea>
+  </label>
+  <button type="submit">Teklif al</button>
+</form>
+<section id="result"></section>
+{% endblock %}

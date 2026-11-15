@@ -1,0 +1,30 @@
+# Selection rules. Read on every request (cached by file mtime): edits apply without a restart.
+
+# Hard constraints. A carrier must pass all of them; every failure is reported as a reason.
+filters:
+  - distance_range
+  - container_size
+  - cargo_type
+
+# Ranking criteria in priority order (lexicographic): a criterion only matters when all criteria
+# above it are exactly equal. "Put price second" = swap the first two lines.
+# `name` is always appended as the final tie-breaker so results are deterministic.
+ranking:
+  - total_cost
+  - hq_proximity
+  - name
+
+# Allowed values for orders and carriers. Adding a cargo type or container size is a one-line change.
+catalog:
+  cargo_types: [Dry, Reefer, Hazardous]
+  container_sizes: [20, 40, 45]
+
+# Jev confidence bands (see README "Low confidence").
+confidence:
+  auto_accept: 0.85 # >= : proceed automatically
+  needs_review: 0.60 # >= : compute the result but flag it for manual review; below: ask for input
+  hazardous_review: 0.15 # P(Hazardous) at or above this always triggers review (asymmetric risk)
+
+distance:
+  approximate_factor: 1.2 # Haversine straight line x factor ~ road distance
+  boundary_warning_ratio: 0.10 # approximate distance within 10% of a carrier limit -> review
