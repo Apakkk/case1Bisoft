@@ -1,7 +1,9 @@
 """Login: one middleware refuses every request without a valid session, apart from a short allowlist.
 
-The allowlist holds the showroom home page (`/`, exactly), so the site opens on it; every other page and the
-API need a login. Pages show locked links to them while logged out (`is_logged_in`).
+The allowlist holds the showroom home page (`/`, exactly), so the site opens on it, and one named route: a
+carrier's page on the showroom (`/a-logistics`, `PUBLIC_ROUTE`). That route is public only when it is the one that
+would handle the request; any route matched before it (`/docs`, `/admin`, ...) or added later stays locked.
+Pages show locked links to the rest while logged out (`is_logged_in`).
 
 Browsers log in on /login and get a signed cookie (stdlib HMAC, no server-side store). API clients may send
 the same credentials as HTTP Basic instead (curl -u, scripts/run_case_orders.py). New routes are protected
@@ -21,6 +23,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.base import RequestResponseEndpoint
+from starlette.routing import Match
 
 from app.config import Settings
 
@@ -32,6 +35,7 @@ LOGIN_PATH = "/login"
 # "/": the showroom is the public front page. /health: the Docker healthcheck has no login.
 PUBLIC_PATHS = frozenset({"/", "/health", LOGIN_PATH, "/logout"})
 PUBLIC_PREFIXES = ("/static/",)
+PUBLIC_ROUTE = "showroom_carrier"  # GET /{slug}, added on the app itself (home_controller.register_carrier_pages)
 API_PREFIX = "/api/"
 
 
@@ -101,6 +105,19 @@ def is_public(path: str) -> bool:
     return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
 
 
+def is_public_route(request: Request) -> bool:
+    """Whether the route that will handle this request is the public carrier page, by the router's own matching.
+
+    Only top-level routes are looked at, in order: the first full match decides. A route reached through
+    include_router never carries PUBLIC_ROUTE's name at this level, so it can only fail closed.
+    """
+    for route in request.app.router.routes:
+        match, _ = route.matches(request.scope)
+        if match is Match.FULL:
+            return getattr(route, "name", None) == PUBLIC_ROUTE
+    return False
+
+
 def safe_next(value: str | None) -> str:
     """Only a path on this site: '/admin/quote?x=1' yes; '//evil.com', 'https://…', '/\\evil' no (open redirect)."""
     if not value or not value.startswith("/") or value.startswith(("//", "/\\")):
@@ -145,6 +162,7 @@ def install_auth(app: FastAPI, auth: Auth) -> None:
             is_public(path)
             or auth.is_valid(request.cookies.get(COOKIE_NAME))
             or (path.startswith(API_PREFIX) and auth.basic_ok(request.headers.get("Authorization")))
+            or is_public_route(request)
         ):
             return await call_next(request)
         return _refuse(request)

@@ -65,7 +65,7 @@ make case-orders        # 7 örnek siparişi çalışan uygulamaya gönderir
 ## Testler
 
 ```bash
-make test        # 508 test; veritabanı, ağ ve Jev gerekmez
+make test        # 519 test; veritabanı, ağ ve Jev gerekmez
 make test-db     # 29 test, PostgreSQL'e karşı
 ```
 

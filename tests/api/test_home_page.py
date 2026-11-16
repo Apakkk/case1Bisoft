@@ -133,3 +133,10 @@ def test_the_fleet_nav_only_says_scroll() -> None:
     html = client_with(CASE_CARRIERS).get("/").text
 
     assert '<p class="drag-hint">Kaydır</p>' in html and "Sürükle" not in html
+
+
+def test_each_truck_has_its_name_for_the_page_address() -> None:
+    carriers = page_data(client_with(CASE_CARRIERS).get("/").text)["carriers"]
+
+    assert isinstance(carriers, list)
+    assert [c["slug"] for c in carriers] == ["a-logistics", "b-logistics", "m-logistics", "s-logistics"]

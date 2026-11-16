@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.routing import BaseRoute, Route
 
-from app.auth import COOKIE_NAME, SESSION_SECONDS, Auth, is_public, safe_next
+from app.auth import COOKIE_NAME, PUBLIC_ROUTE, SESSION_SECONDS, Auth, is_public, safe_next
 from app.config import Settings
 from app.dependencies import get_carrier_service, get_rules
 from app.main import create_app
@@ -50,22 +50,22 @@ def anonymous() -> TestClient:
 # --- Default deny ---------------------------------------------------------------------------------------------------
 
 
-def endpoints(routes: Iterable[BaseRoute], prefix: str = "") -> Iterator[tuple[str, set[str]]]:
-    """(path, methods) of every endpoint; included routers are kept nested in this FastAPI version, so recurse."""
+def endpoints(routes: Iterable[BaseRoute], prefix: str = "") -> Iterator[tuple[str, set[str], str]]:
+    """(path, methods, name) of every endpoint; included routers are kept nested in this FastAPI version, so recurse."""
     for route in routes:
         router = getattr(route, "original_router", None)
         if router is not None:
             yield from endpoints(router.routes, prefix + route.include_context.prefix)  # type: ignore[attr-defined]
         elif isinstance(route, APIRoute | Route):
-            yield prefix + route.path, set(route.methods or {"GET"})
+            yield prefix + route.path, set(route.methods or {"GET"}), route.name
 
 
 def test_every_route_outside_the_allowlist_refuses_anonymous_requests() -> None:
     app = create_app()
     client = TestClient(app, follow_redirects=False)
     checked: set[str] = set()
-    for path, methods in endpoints(app.routes):
-        if is_public(path):
+    for path, methods, name in endpoints(app.routes):
+        if is_public(path) or name == PUBLIC_ROUTE:  # the carrier pages have their own tests below
             continue
         url = re.sub(r"\{[^}]+\}", "1", path)
         for method in methods - {"HEAD"}:
@@ -308,3 +308,29 @@ def test_the_login_page_shows_the_locked_menu_without_a_second_login_button(anon
 
     assert sorted(LOCKED.findall(html)) == ["carriers", "quote", "rules"]
     assert 'class="login-link"' not in html
+
+
+# --- Public carrier pages (/a-logistics) ----------------------------------------------------------------------------
+
+
+def test_a_carrier_page_opens_without_a_login_on_that_carrier(anonymous: TestClient) -> None:
+    response = anonymous.get("/m-logistics")
+
+    assert response.status_code == 200
+    html = response.text
+    assert '<h1 class="hero-name" data-name>M-Logistics</h1>' in html
+    assert "<span data-counter>03 / 04</span>" in html  # A, B, M, S
+    assert '"start": 2' in html
+
+
+def test_an_unknown_carrier_page_goes_to_the_showroom_not_to_the_login(anonymous: TestClient) -> None:
+    for path in ("/yok-boyle-firma", "/M-LOGISTICS-X"):
+        response = anonymous.get(path)
+        assert (response.status_code, response.headers["location"]) == (303, "/"), path
+
+
+def test_one_segment_app_routes_stay_locked_although_carrier_pages_are_public(anonymous: TestClient) -> None:
+    for path in ("/docs", "/redoc", "/admin"):
+        response = anonymous.get(path)
+        assert response.status_code == 303 and response.headers["location"].startswith("/login"), path
+    assert anonymous.post("/m-logistics").status_code in (401, 303, 405)  # only GET is public

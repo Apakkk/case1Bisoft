@@ -11,6 +11,8 @@ The detail view's camera only goes where a facet's value is painted: each facet'
 projected corners plus a margin (tests check that every camera contains its marking).
 """
 
+import re
+import unicodedata
 import zlib
 from dataclasses import dataclass
 from decimal import Decimal
@@ -300,10 +302,30 @@ def card(carrier: Carrier) -> dict[str, Any]:
     }
 
 
+_TURKISH = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+
+
+def slug(name: str) -> str:
+    """'A-Logistics' -> 'a-logistics', 'Öz Taşımacılık' -> 'oz-tasimacilik': the carrier's part of the page URL."""
+    plain = unicodedata.normalize("NFKD", name.translate(_TURKISH)).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", plain.lower()).strip("-") or "firma"
+
+
+def unique_slugs(carriers: list[Carrier]) -> list[str]:
+    """One slug per carrier; names that reduce to the same slug ('A Logistics', 'A-Logistics') get -2, -3, ..."""
+    seen: dict[str, int] = {}
+    result = []
+    for carrier in carriers:
+        base = slug(carrier.name)
+        seen[base] = seen.get(base, 0) + 1
+        result.append(base if seen[base] == 1 else f"{base}-{seen[base]}")
+    return result
+
+
 def page_data(carriers: list[Carrier]) -> dict[str, Any]:
     """The JSON block the page script reads: carriers in display order plus the image geometry and cameras."""
     return {
-        "carriers": [card(c) for c in carriers],
+        "carriers": [{**card(c), "slug": s} for c, s in zip(carriers, unique_slugs(carriers), strict=True)],
         "truck": {"width": TRUCK.width, "height": TRUCK.height, "origin": list(TRUCK_ORIGIN)},
         "scene": {"width": SCENE.width, "height": SCENE.height},
         "cameras": {key: {"box": list(cam.box), "zoom": cam.zoom} for key, cam in CAMERAS.items()},

@@ -13,7 +13,7 @@
   <script src="{{ url_for('static', path='home/home.js') }}" defer></script>
 </head>
 {%- from "_lock.html" import lock %}
-{%- set first = cards[0] if cards else none %}
+{%- set first = cards[start] if cards else none %}{# the carrier in the centre: /a-logistics opens on it #}
 {%- set signed_in = is_logged_in(request) %}
 {#- An admin link: as it is when logged in, else a locked link to the login page that returns to it. #}
 {%- macro admin_link(href, label, cls) -%}
@@ -65,7 +65,7 @@
   {% if cards %}
     <section class="hero" data-hero aria-roledescription="carousel" aria-label="Taşıyıcı filosu">
       <div class="hero-copy">
-        <p class="eyebrow"><span data-counter>01 / {{ "%02d" | format(cards | length) }}</span><span class="eyebrow-sep"></span>Filo</p>
+        <p class="eyebrow"><span data-counter>{{ "%02d" | format(start + 1) }} / {{ "%02d" | format(cards | length) }}</span><span class="eyebrow-sep"></span>Filo</p>
         <h1 class="hero-name" data-name>{{ first.name }}</h1>
         <p class="hero-line" data-line>{{ first.line }}</p>
         <div class="hero-actions">

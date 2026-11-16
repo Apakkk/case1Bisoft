@@ -25,7 +25,9 @@ from app.views.showroom import (
     page_data,
     panel_homography,
     project,
+    slug,
     turkish_list,
+    unique_slugs,
 )
 from tests.case_data import CASE_CARRIERS, M_LOGISTICS, S_LOGISTICS
 
@@ -155,3 +157,24 @@ def test_page_data_is_json_serialisable() -> None:
     data = page_data(list(CASE_CARRIERS))
 
     assert json.loads(json.dumps(data))["carriers"][0]["name"] == CASE_CARRIERS[0].name
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("A-Logistics", "a-logistics"),
+        ("M Logistics Co.", "m-logistics-co"),
+        ("Öz Taşımacılık", "oz-tasimacilik"),
+        ("İzmir Lojistik", "izmir-lojistik"),
+        ("Café & Co", "cafe-co"),
+        ("***", "firma"),
+    ],
+)
+def test_the_url_part_is_the_carriers_name(name: str, expected: str) -> None:
+    assert slug(name) == expected
+
+
+def test_names_with_the_same_url_part_get_a_number() -> None:
+    carriers = [replace(M_LOGISTICS, name=n) for n in ("A Logistics", "A-Logistics", "a.logistics", "B-Logistics")]
+
+    assert unique_slugs(carriers) == ["a-logistics", "a-logistics-2", "a-logistics-3", "b-logistics"]

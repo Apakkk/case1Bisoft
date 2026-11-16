@@ -264,7 +264,7 @@
     });
     if (focused) parts[i].hit.focus({ preventScroll: true });
     try {
-      history.replaceState(null, "", `#firma-${c.id}`);
+      history.replaceState(null, "", `/${c.slug}`); // /a-logistics: a reload or a shared link opens the same carrier
     } catch {
       /* file:// or sandboxed: the hash is a convenience */
     }
@@ -841,8 +841,18 @@
 
   /* ---------- Start ---------- */
 
-  const fromHash = /^#firma-(\d+)/.exec(location.hash);
-  const startIndex = Math.max(0, fromHash ? carriers.findIndex((c) => String(c.id) === fromHash[1]) : 0);
+  // The server already picked the carrier from the path (/a-logistics). Links from before addresses had a path
+  // (#a-logistics, #firma-<id>) still open the same carrier.
+  const fromHash = (() => {
+    try {
+      return decodeURIComponent(location.hash.slice(1)).toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  const oldId = /^firma-(\d+)$/.exec(fromHash)?.[1];
+  const hashIndex = fromHash ? carriers.findIndex((c) => c.slug === fromHash || String(c.id) === oldId) : -1;
+  const startIndex = hashIndex >= 0 ? hashIndex : data.start || 0;
   measure();
   S.pos = S.target = startIndex;
   render();

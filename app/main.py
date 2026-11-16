@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(rules_admin_controller.router)
     app.include_router(city_admin_controller.router)
     app.include_router(home_controller.router)
+    home_controller.register_carrier_pages(app)  # /{slug}: after every other route, so it never shadows one
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
 
