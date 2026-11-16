@@ -1,6 +1,7 @@
 """Send the case's seven test orders to a running API and compare with the expected results.
 
-Run: make case-orders   (API on http://localhost:8000; override with BASE_URL)
+Run: make case-orders  (= uv run python -m scripts.run_case_orders; API on localhost:8000, override: BASE_URL)
+Logs in with HTTP Basic (ADMIN_EMAIL / ADMIN_PASSWORD from .env, else the defaults).
 Exit code 1 if any order differs. Structured orders: no Jev call unless a carrier note restricts.
 """
 
@@ -8,6 +9,8 @@ import os
 import sys
 
 import httpx
+
+from app.config import Settings
 
 ORDERS = [
     (1, "Miami", "Fort Lauderdale", 40, "Reefer", "M-Logistics", "30.00"),
@@ -22,9 +25,11 @@ ORDERS = [
 
 def main() -> int:
     base_url = os.environ.get("BASE_URL", "http://localhost:8000")
+    settings = Settings()
+    auth = (settings.admin_email, settings.admin_password.get_secret_value())
     failures = 0
     print(f"{'#':<3}{'Route':<30}{'Order':<16}{'Expected':<26}{'Got':<26}{'Status':<14}")
-    with httpx.Client(base_url=base_url, timeout=30) as client:
+    with httpx.Client(base_url=base_url, auth=auth, timeout=30) as client:
         for n, origin, destination, size, cargo, carrier, cost in ORDERS:
             body = {"origin": origin, "destination": destination, "container_size": size, "cargo_type": cargo}
             data = client.post("/api/v1/quotes", json=body).raise_for_status().json()

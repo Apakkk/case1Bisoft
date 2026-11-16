@@ -8,6 +8,7 @@ from app.main import create_app
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, default_rules
+from tests.clients import logged_in
 from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, offline_distances
 
 NEW = {
@@ -28,7 +29,7 @@ def client() -> Iterator[TestClient]:
     repo, distances, rules = InMemoryCarrierRepository(CASE_CARRIERS), offline_distances(), StaticRules(default_rules())
     app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, distances, rules)
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, distances, rules)
-    yield TestClient(app)
+    yield logged_in(app)
 
 
 def test_list_returns_the_case_carriers(client: TestClient) -> None:
@@ -98,7 +99,7 @@ def test_an_unknown_hq_city_is_refused_with_a_suggestion_before_jev_is_asked() -
     app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, offline_distances(), rules, jev)
     body = {**NEW, "hq_city": "Jacksonvile", "description": "Only ports"}
 
-    response = TestClient(app).post("/api/v1/carriers", json=body)
+    response = logged_in(app).post("/api/v1/carriers", json=body)
 
     assert response.status_code == 422
     detail = response.json()["detail"]

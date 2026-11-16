@@ -16,6 +16,7 @@ from app.models.city import City
 from app.services.carrier_service import CarrierService
 from app.services.city_service import ONLINE_DISABLED, CityService
 from tests.case_data import CASE_CARRIERS, default_rules
+from tests.clients import logged_in
 from tests.fakes import (
     FakeJev,
     FakePlaces,
@@ -46,7 +47,7 @@ def make_api(places: FakePlaces | None) -> Iterator[Api]:
     app.dependency_overrides[get_city_service] = lambda: service
     app.dependency_overrides[get_carrier_service] = lambda: carriers
     app.dependency_overrides[get_rules] = lambda: rules.get()
-    yield Api(TestClient(app), fake, repo)
+    yield Api(logged_in(app), fake, repo)
 
 
 @pytest.fixture

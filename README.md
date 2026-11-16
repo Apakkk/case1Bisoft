@@ -20,7 +20,7 @@ Requirements: Docker, [uv](https://docs.astral.sh/uv/) and make. Python is 3.12 
 for uv locally, `python:3.12-slim` in the image. Jev is pinned to `jev-1.14.0`.
 
 ```bash
-cp .env.example .env          # add TYPESAFE_API_KEY (and optionally ORS_API_KEY)
+cp .env.example .env          # set ADMIN_EMAIL + ADMIN_PASSWORD (the login), add TYPESAFE_API_KEY (+ ORS_API_KEY)
 make run                      # PostgreSQL + API in Docker; schema and seed load on first start
 make case-orders              # sends the 7 case orders to the running API: 7/7
 ```
@@ -31,9 +31,30 @@ make case-orders              # sends the 7 case orders to the running API: 7/7
 - Rules (ranking priority): http://localhost:8000/admin/rules
 - API docs: http://localhost:8000/docs
 
+Every page and the API need a login with the `ADMIN_EMAIL` / `ADMIN_PASSWORD` account from `.env` (see [Login](#login)).
+
 Local development: `make install`, `make dev` (database in Docker, API with auto-reload; it stops
 the Docker API container first, because both listen on port 8000),
 `make check` (ruff + mypy --strict + fast tests).
+
+## Login
+
+One account guards everything. A single middleware (`app/auth.py`) refuses every request without a valid
+session, so a route added later is protected without extra code; only `/login`, `/logout`, `/static/*` and
+`/health` (the Docker healthcheck) are open.
+
+- Browser: `/login` sets a signed cookie (HMAC-SHA256 from the standard library, HttpOnly, SameSite=Lax,
+  8 hours). Logging out deletes it. After login you return to the page you asked for (local paths only).
+- API clients: the same account as HTTP Basic, `curl -u "$ADMIN_EMAIL:$ADMIN_PASSWORD" …`.
+  `make case-orders` reads it from `.env`.
+- Refused requests: a page redirects to `/login?next=…`; `/api/*` answers
+  `401 {"error": "UNAUTHORIZED", "detail": …}`; an HTMX request gets `401` with `HX-Redirect`, so the
+  whole tab goes to the login page instead of the form swapping it in.
+  A script's `fetch()` (city suggestions, `Sec-Fetch-Mode` not `navigate`) gets a bare `401`, so the
+  login page never lands in the suggestion list.
+- `ADMIN_EMAIL` and `ADMIN_PASSWORD` are required and exist only in `.env` (git-ignored), never in the code;
+  the app refuses to start without them. `SESSION_SECRET` (the cookie signing key) is optional: without it the
+  key is random per start, so every restart logs everyone out. Tests use their own account (`tests/conftest.py`).
 
 ## Architecture
 
@@ -83,6 +104,7 @@ app/
   services/      Quote, Carrier, City services        selection/   pure rules: no I/O, mypy --strict
   repositories/  PostgreSQL (parametrized SQL), rules  clients/     Jev adapter, distance chain, ORS
   models/        domain dataclasses                   schemas/     Pydantic API DTOs
+  auth.py        login middleware (every route but /login, /logout, /static, /health)
 config/          rules.yaml, distances.yaml (case table), cities.csv + city_aliases.yaml (case catalog),
                  us_cities.csv (5,105 US cities, built by scripts/build_us_cities.py)
 db/init/         schema + seed (run once on an empty volume); db/migrations/ for later changes
@@ -321,7 +343,8 @@ OpenRouteService, and a carrier added on the admin screen appears as a new truck
 | GET, POST | `/api/v1/carriers` | `409 DUPLICATE_CARRIER` for a duplicate name (case-insensitive) |
 | GET, PUT, DELETE | `/api/v1/carriers/{id}` | `404 CARRIER_NOT_FOUND` |
 | GET | `/api/v1/cities?q=orl&limit=5` | City suggestions `{"items": [{"name", "state", "source"}], "warnings": []}`; `limit` 1–10 |
-| GET | `/health` | Includes a database probe |
+| GET | `/health` | Includes a database probe; open without a login (Docker healthcheck) |
+| GET, POST | `/login`, POST `/logout` | Browser login page; API clients send HTTP Basic instead |
 
 A description that contradicts an entered field is a business outcome too: `200` with
 `"status": "needs_confirmation"` and a `confirmation` object; resend the same order with
@@ -339,15 +362,17 @@ app started; a broken edit keeps the last valid rules and adds a warning). Unkno
 are rejected with 422, so a misspelled field is never silently ignored.
 
 ```bash
-curl -s localhost:8000/api/v1/quotes -H 'content-type: application/json' \
+set -a; . ./.env; set +a     # ADMIN_EMAIL, ADMIN_PASSWORD for curl -u
+
+curl -s -u "$ADMIN_EMAIL:$ADMIN_PASSWORD" localhost:8000/api/v1/quotes -H 'content-type: application/json' \
   -d '{"origin": "Miami", "destination": "Atlanta", "container_size": 20, "cargo_type": "Reefer"}'
 
 # Free text: the container size is parsed, the cargo type comes from Jev
-curl -s localhost:8000/api/v1/quotes -H 'content-type: application/json' \
+curl -s -u "$ADMIN_EMAIL:$ADMIN_PASSWORD" localhost:8000/api/v1/quotes -H 'content-type: application/json' \
   -d '{"origin": "Miami", "destination": "Atlanta", "description": "20 ft container of frozen shrimp"}'
 
 # A requirement in the description: Jev finds the conflict, M-Logistics ($235) is selected
-curl -s localhost:8000/api/v1/quotes -H 'content-type: application/json' \
+curl -s -u "$ADMIN_EMAIL:$ADMIN_PASSWORD" localhost:8000/api/v1/quotes -H 'content-type: application/json' \
   -d '{"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry",
        "description": "S-Logistics ile çalışmak istemiyorum"}'
 ```
@@ -386,12 +411,12 @@ Money and miles are decimals serialized as strings, so nothing is rounded throug
 | `tests/unit/services` | Confidence bands, hazardous asymmetry, the confirmation for a contradicted field, order/carrier compatibility, Jev outage, batching, city suggestion quota guards | – | – | fake |
 | `tests/unit/clients` | The Jev client with a scripted SDK: token count and model, outage pause, the answer cache and its key | – | – | scripted |
 | `tests/unit/test_showroom.py` | Home page view model: the curtain and door homographies land on the measured corners, every facet camera frames its marking, accents, carrier facts | – | – | – |
-| `tests/api` | REST endpoints, the admin screen and the home page over TestClient | fake | – | fake |
+| `tests/api` | REST endpoints, the admin screen and the home page over TestClient (logged in through `/login`); login, refusals and a walk over every route without a session | fake | – | fake |
 | `tests/integration` | PostgreSQL repositories, CHECK constraints, the real app wiring | ✓ | – | – |
 | `tests/live` | Two tiny real Jev requests (opt-in, costs tokens) | – | ✓ | real |
 
 ```bash
-make test        # 453 tests, no database/network/Jev, ~2 s
+make test        # 484 tests, no database/network/Jev, ~2 s
 make test-db     # 29 tests against the PostgreSQL container (each test rolls back)
 make test-live   # 2 real Jev requests
 make case-orders # the 7 orders against the running API
@@ -489,6 +514,9 @@ Removing one does not change stored carriers: their edit form shows the value ti
 | `JEV_TIMEOUT_SECONDS` | `5` | Per request; one retry |
 | `ORS_API_KEY` | – | OpenRouteService; without it off-table routes use Haversine, suggestions stay local and only shipped or stored cities are accepted |
 | `RULES_PATH` | `config/rules.yaml` | |
+| `ADMIN_EMAIL` | – (required) | The login account; the app does not start without it |
+| `ADMIN_PASSWORD` | – (required) | |
+| `SESSION_SECRET` | random per start | Signs the session cookie; set it so restarts and `make dev` reloads keep you logged in |
 
 ## Decisions
 
@@ -526,4 +554,5 @@ Removing one does not change stored carriers: their edit form shows the value ti
 - The distance cache never expires (road distances rarely change).
 - The Jev answer cache is in memory: a restart empties it, and several app processes would not share it
   (the app runs as one process). Texts are compared exactly, so a change of case is a new question.
-- The admin screen has no authentication.
+- One shared account, no roles; it lives in `.env`, so it is not in this public repository. There is no limit on login attempts, and the app serves plain HTTP
+  (put it behind TLS before using it outside localhost).

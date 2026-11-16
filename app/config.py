@@ -18,6 +18,12 @@ class Settings(BaseSettings):
 
     ors_api_key: SecretStr | None = None
 
+    # Login: one account guards every page and the API (see app/auth.py). Required, only from .env / the
+    # environment: the repository is public, so the credentials are never in the code.
+    admin_email: str
+    admin_password: SecretStr
+    session_secret: SecretStr | None = None  # signs the session cookie; unset -> random, so restarts log out
+
     rules_path: Path = Path("config/rules.yaml")
     config_dir: Path = Path("config")  # distances.yaml, cities.csv, city_aliases.yaml
 

@@ -7,8 +7,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.auth import Auth, install_auth
 from app.config import get_settings
 from app.controllers import (
+    auth_controller,
     carrier_admin_controller,
     carrier_api_controller,
     city_admin_controller,
@@ -56,6 +58,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     register_error_handlers(app)
+    install_auth(app, Auth.from_settings(get_settings()))
+    app.include_router(auth_controller.router)
     app.include_router(health_controller.router)
     app.include_router(quote_controller.router)
     app.include_router(carrier_api_controller.router)

@@ -13,6 +13,7 @@ from app.selection.rules import RulesError
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, CASE_ORDERS, CaseOrder, default_rules
+from tests.clients import logged_in
 from tests.fakes import (
     FakeJev,
     InMemoryCarrierRepository,
@@ -30,7 +31,7 @@ def client() -> Iterator[TestClient]:
     repo, distances, rules = InMemoryCarrierRepository(CASE_CARRIERS), offline_distances(), StaticRules(default_rules())
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, distances, rules)
     app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, distances, rules)
-    yield TestClient(app)
+    yield logged_in(app)
 
 
 @pytest.mark.parametrize("case", CASE_ORDERS, ids=lambda c: f"order-{c.id}")
@@ -104,7 +105,7 @@ def test_a_typo_in_a_city_is_422_with_suggestions_and_costs_no_jev_tokens() -> N
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), rules, jev)
     body = {"origin": "Tamap", "destination": "Miami", "description": "40'lık kuru yük"}  # would ask Jev
 
-    response = TestClient(app).post("/api/v1/quotes", json=body)
+    response = logged_in(app).post("/api/v1/quotes", json=body)
 
     assert response.status_code == 422
     assert response.json() == {
@@ -167,7 +168,7 @@ def test_invalid_rules_file_is_reported_not_hidden() -> None:
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), BrokenRules())
     body = {"origin": "Miami", "destination": "Atlanta", "container_size": 20, "cargo_type": "Reefer"}
 
-    response = TestClient(app).post("/api/v1/quotes", json=body)
+    response = logged_in(app).post("/api/v1/quotes", json=body)
 
     assert response.status_code == 500
     assert response.json()["error"] == "INVALID_RULES"
@@ -200,7 +201,7 @@ def test_pressing_twice_asks_jev_once_and_a_changed_description_asks_again() -> 
     app = create_app()
     repo, distances, rules = InMemoryCarrierRepository(CASE_CARRIERS), offline_distances(), StaticRules(default_rules())
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, distances, rules, jev)
-    client = TestClient(app)
+    client = logged_in(app)
     order = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
 
     first = client.post("/api/v1/quotes", json={**order, "description": "hafta sonu teslim"}).json()
@@ -220,7 +221,7 @@ def test_a_contradicting_description_answers_needs_confirmation_and_a_confirmed_
     app = create_app()
     repo, rules = InMemoryCarrierRepository(CASE_CARRIERS), StaticRules(default_rules())
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), rules, jev)
-    client = TestClient(app)
+    client = logged_in(app)
     order = {"origin": "Miami", "destination": "Orlando", "container_size": 40, "cargo_type": "Dry"}
 
     asked = client.post("/api/v1/quotes", json={**order, "description": "lityum pil"})

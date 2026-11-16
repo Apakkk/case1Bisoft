@@ -18,6 +18,7 @@ from app.repositories.rules_repository import FileRulesRepository
 from app.services.quote_service import QuoteService
 from app.services.rules_service import RulesService
 from tests.case_data import CASE_CARRIERS
+from tests.clients import logged_in
 from tests.fakes import InMemoryCarrierRepository, offline_distances
 
 # Miami-based and expensive: wins only when HQ proximity outranks price.
@@ -41,7 +42,7 @@ def screen(tmp_path: Path) -> Iterator[Screen]:
     app.dependency_overrides[get_rules_service] = lambda: RulesService(store)
     app.dependency_overrides[get_rules] = lambda: store.get()
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), store)
-    yield Screen(TestClient(app), path)
+    yield Screen(logged_in(app), path)
 
 
 def order_of(html: str) -> list[str]:

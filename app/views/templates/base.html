@@ -22,6 +22,8 @@
     .actions button { padding: .25rem .6rem; margin: 0; font-size: .85rem; }
     fieldset.inline label { display: inline-flex; margin-right: 1rem; }
     .htmx-request { opacity: .6; transition: opacity .2s; }
+    nav form.logout { margin: 0; }
+    nav form.logout button { padding: .2rem .7rem; margin: 0; font-size: .85rem; width: auto; }
     pre.explanation { white-space: pre-wrap; font-family: inherit; }
     .confirmation { border-left: 4px solid #e0a100; background: rgba(224, 161, 0, .12); padding: .8rem 1rem;
       border-radius: var(--pico-border-radius); margin-bottom: 1rem; }
@@ -61,6 +63,7 @@
         <li><a href="/admin/quote">Teklif</a></li>
         <li><a href="/admin/rules">Kurallar</a></li>
         <li><a href="/docs">API</a></li>
+        <li><form method="post" action="/logout" class="logout"><button type="submit" class="secondary outline">Çıkış</button></form></li>
       </ul>
     </nav>
     {% block content %}{% endblock %}

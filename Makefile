@@ -64,4 +64,4 @@ smoke-jev: ## One tiny Jev call to verify the API key (a few input tokens)
 	uv run --env-file .env python scripts/jev_smoke.py
 
 case-orders: ## Send the 7 case orders to the running API and compare with the expected results
-	uv run python scripts/run_case_orders.py
+	uv run python -m scripts.run_case_orders

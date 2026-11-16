@@ -117,6 +117,12 @@ button { font: inherit; color: inherit; }
   font-size: 14px; color: var(--muted); text-decoration: none; transition: color 0.25s ease;
 }
 .topnav a:hover { color: var(--ink); }
+.topnav .logout { display: contents; }
+.topnav .logout button {
+  padding: 0; border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted);
+  cursor: pointer; transition: color 0.25s ease;
+}
+.topnav .logout button:hover, .topnav .logout button:focus-visible { color: var(--ink); }
 
 /* ---------- Hero copy ---------- */
 
@@ -504,7 +510,7 @@ html:not(.js) .stage { position: fixed; }
 @media (max-width: 760px) {
   .topbar { padding: 16px var(--gutter); }
   .topnav { gap: 14px; }
-  .topnav a { font-size: 13px; }
+  .topnav a, .topnav .logout button { font-size: 13px; }
   .brand { font-size: 14px; }
 
   .js .hero-copy { top: 84px; bottom: auto; right: var(--gutter); max-width: none; }

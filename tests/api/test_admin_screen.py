@@ -12,6 +12,7 @@ from app.models.carrier import NoteStatus
 from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from tests.case_data import CASE_CARRIERS, default_rules
+from tests.clients import logged_in
 from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, choice, offline_distances
 
 VALID = {
@@ -42,7 +43,7 @@ def screen() -> Iterator[Screen]:
     app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, distances, rules, jev)
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, distances, rules, jev)
     app.dependency_overrides[get_rules] = lambda: rules.get()
-    yield Screen(TestClient(app), repo, jev, rules)
+    yield Screen(logged_in(app), repo, jev, rules)
 
 
 def test_list_page_shows_every_carrier(screen: Screen) -> None:

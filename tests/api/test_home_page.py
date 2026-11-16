@@ -12,6 +12,7 @@ from app.main import create_app
 from app.models.carrier import Carrier
 from app.services.carrier_service import CarrierService
 from tests.case_data import CASE_CARRIERS, S_LOGISTICS, default_rules
+from tests.clients import logged_in
 from tests.fakes import FakeJev, InMemoryCarrierRepository, StaticRules, offline_distances
 
 DATA_BLOCK = re.compile(r'<script type="application/json" id="fleet-data">(.*?)</script>', re.S)
@@ -23,7 +24,7 @@ def client_with(carriers: Iterable[Carrier], jev: FakeJev | None = None) -> Test
     distances, rules = offline_distances(), StaticRules(default_rules())
     app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, distances, rules, jev)
     app.dependency_overrides[get_rules] = lambda: rules.get()
-    return TestClient(app)
+    return logged_in(app)
 
 
 def page_data(html: str) -> dict[str, object]:

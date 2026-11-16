@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.config import Settings, get_settings
 from app.main import create_app
 from tests.case_data import CASE_ORDERS, CaseOrder
+from tests.clients import logged_in
 
 pytestmark = pytest.mark.db
 
@@ -20,7 +21,7 @@ def client() -> Iterator[TestClient]:
     )
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr("app.main.get_settings", lambda: offline)
-        with TestClient(create_app()) as test_client:
+        with logged_in(create_app()) as test_client:
             yield test_client
 
 
