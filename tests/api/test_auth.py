@@ -72,14 +72,19 @@ def test_every_route_outside_the_allowlist_refuses_anonymous_requests() -> None:
             response = client.request(method, url)
             assert response.status_code in (401, 303), f"{method} {url} -> {response.status_code}"
             checked.add(url)
-    expected = {"/", "/docs", "/openapi.json", "/admin/quote", "/admin/rules", "/api/v1/quotes", "/api/v1/carriers/1"}
+    expected = {"/docs", "/openapi.json", "/admin/quote", "/admin/rules", "/api/v1/quotes", "/api/v1/carriers/1"}
     assert expected <= checked
-    assert len(checked) >= 20
+    assert len(checked) >= 19  # every route but the allowlist ("/" is public now)
 
 
 def test_docs_and_the_schema_need_a_login(anonymous: TestClient) -> None:
-    for path in ("/docs", "/redoc", "/openapi.json", "/"):
+    for path in ("/docs", "/redoc", "/openapi.json"):
         assert anonymous.get(path).status_code == 303
+
+
+def test_only_the_home_page_itself_is_public() -> None:
+    assert is_public("/")
+    assert not any(is_public(path) for path in ("/admin", "/admin/carriers", "/admin/quote", "/api/v1/carriers"))
 
 
 def test_health_login_and_static_files_stay_open(anonymous: TestClient) -> None:
@@ -169,7 +174,7 @@ def test_logout_clears_the_cookie() -> None:
 
     response = client.post("/logout", follow_redirects=False)
 
-    assert response.status_code == 303 and response.headers["location"] == "/login"
+    assert response.status_code == 303 and response.headers["location"] == "/"  # back to the public showroom
     assert COOKIE_NAME not in client.cookies
     assert client.get("/admin/carriers", follow_redirects=False).status_code == 303
 
@@ -259,3 +264,47 @@ def test_the_account_is_required_and_has_no_default(monkeypatch: pytest.MonkeyPa
         Settings(_env_file=None)
 
     assert {e["loc"][0] for e in error.value.errors()} == {"admin_email", "admin_password"}
+
+
+# --- Public showroom, locked menu -----------------------------------------------------------------------------------
+
+LOCKED = re.compile(r'<a href="/login\?next=%2Fadmin%2F(carriers|quote|rules)" class="locked" title="Giriş gerekli">')
+
+
+def test_the_showroom_opens_without_a_login_and_locks_the_admin_links() -> None:
+    response = TestClient(app_with_carriers(), follow_redirects=False).get("/")
+
+    assert response.status_code == 200
+    html = response.text
+    assert sorted(LOCKED.findall(html)) == ["carriers", "quote", "rules"]
+    assert '<a href="/login" class="login-link">Giriş</a>' in html
+    assert 'action="/logout"' not in html
+    # The showroom's own buttons are locked the same way.
+    assert re.search(r'<a class="cta locked" href="/login\?next=%2Fadmin%2Fquote"[^>]*>.*Teklif al', html)
+
+
+def test_a_locked_link_leads_through_the_login_to_its_page() -> None:
+    client = TestClient(app_with_carriers(), follow_redirects=False)
+    assert client.get("/admin/quote").headers["location"] == "/login?next=%2Fadmin%2Fquote"  # typed address
+
+    response = client.post("/login", data={"email": TEST_EMAIL, "password": TEST_PASSWORD, "next": "/admin/quote"})
+
+    assert response.status_code == 303 and response.headers["location"] == "/admin/quote"
+
+
+def test_logged_in_the_menu_has_no_locks_and_marks_the_current_page() -> None:
+    client = logged_in(app_with_carriers())
+
+    home = client.get("/").text
+    carriers = client.get("/admin/carriers").text
+
+    assert "locked" not in home and "locked" not in carriers
+    assert '<a href="/admin/carriers" aria-current="page">Firmalar</a>' in carriers
+    assert '<a href="/admin/quote">Teklif</a>' in home and '<a class="cta" href="/admin/quote">Teklif al</a>' in home
+
+
+def test_the_login_page_shows_the_locked_menu_without_a_second_login_button(anonymous: TestClient) -> None:
+    html = anonymous.get("/login?next=/admin/rules").text
+
+    assert sorted(LOCKED.findall(html)) == ["carriers", "quote", "rules"]
+    assert 'class="login-link"' not in html

@@ -102,10 +102,15 @@ CONFLICT: NoulCriteria = {
 }
 NO_REQUEST = "no_specific_carrier"
 REQUESTED = "Which carrier does the order note explicitly ask to use? Refusing a carrier is not asking for one."
-NOTE_RESTRICTS = (
-    "Does this carrier description restrict which orders the carrier accepts "
-    "(cargo, container sizes, routes, distances, dates)?"
-)
+NOTE_RESTRICTS = "Does this carrier description restrict which orders the carrier accepts?"
+# Both outcomes described, like CONFLICT: without the "false" side, capability claims that mention cargo ("all cargo
+# types", "her şey taşınır") landed in the grey zone (0.17-0.24) and showed as restrictions.
+NOTE_RESTRICTION: NoulCriteria = {
+    "true": "It refuses or limits orders: a cargo type, container size, route or region, distance, or days "
+    "it does not take, or says it only takes certain ones.",
+    "false": "It only describes capabilities, coverage or experience and excludes nothing "
+    "(e.g. 'nationwide', 'all cargo types', 'we carry everything').",
+}
 
 
 class SystemOne(Protocol):
@@ -190,7 +195,7 @@ class TypesafeJevClient:
 
     def note_has_restriction(self, note: str) -> NotePrecheck:
         result, elapsed, meta = self._ask(
-            "note_has_restriction", note, {"restricts": Noul(instructions=NOTE_RESTRICTS)}
+            "note_has_restriction", note, {"restricts": Noul(instructions=NOTE_RESTRICTS, criteria=NOTE_RESTRICTION)}
         )
         return NotePrecheck(result.nouls["restricts"].noul, elapsed, meta)
 

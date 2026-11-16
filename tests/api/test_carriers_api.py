@@ -75,7 +75,6 @@ def test_duplicate_name_is_409(client: TestClient) -> None:
     ("change", "field"),
     [
         ({"cargo_types": ["Flatrack"]}, "cargo_types"),
-        ({"container_sizes": [53]}, "container_sizes"),
     ],
 )
 def test_catalog_violations_are_422_per_field(client: TestClient, change: dict[str, object], field: str) -> None:
@@ -87,7 +86,14 @@ def test_catalog_violations_are_422_per_field(client: TestClient, change: dict[s
 
 @pytest.mark.parametrize(
     "change",
-    [{"min_miles": "600", "max_miles": "100"}, {"rate_per_mile": "0"}, {"container_sizes": []}, {"name": "  "}],
+    [
+        {"min_miles": "600", "max_miles": "100"},
+        {"rate_per_mile": "0"},
+        {"container_sizes": []},
+        {"container_sizes": [0]},
+        {"container_sizes": [100]},
+        {"name": "  "},
+    ],
 )
 def test_schema_violations_are_422(client: TestClient, change: dict[str, object]) -> None:
     assert client.post("/api/v1/carriers", json={**NEW, **change}).status_code == 422
@@ -118,3 +124,12 @@ def test_a_shipped_us_city_is_a_valid_hq(client: TestClient) -> None:
 def test_unknown_carrier_is_404(client: TestClient) -> None:
     assert client.put("/api/v1/carriers/999", json=NEW).status_code == 404
     assert client.delete("/api/v1/carriers/999").status_code == 404
+
+
+def test_a_carrier_may_carry_a_size_outside_the_standard_ones_and_orders_can_use_it(client: TestClient) -> None:
+    created = client.post("/api/v1/carriers", json={**NEW, "container_sizes": [53, 20, 53], "cargo_types": ["Dry"]})
+
+    assert created.status_code == 201
+    assert created.json()["container_sizes"] == [20, 53]
+    order = {"origin": "Miami", "destination": "Orlando", "container_size": 53, "cargo_type": "Dry"}
+    assert client.post("/api/v1/quotes", json=order).json()["carrier"] == "K-Logistics"

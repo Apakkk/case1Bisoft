@@ -1,0 +1,22 @@
+{#- One top bar for every page (showroom, admin pages, login), so the menu sits in the same place everywhere.
+    Logged out, the admin pages show as locked links to the login page (which returns to them afterwards). #}
+{%- from "_lock.html" import lock %}
+{%- set signed_in = is_logged_in(request) %}
+{%- set here = request.url.path %}
+<header class="topbar">
+  <a class="brand" href="/"{% if here == "/" %} aria-current="page"{% endif %}><span class="brand-dot"></span><span class="brand-text">Taşıyıcı Seçimi</span></a>
+  <nav class="topnav" aria-label="Ana menü">
+    {%- for href, label in [("/admin/carriers", "Firmalar"), ("/admin/quote", "Teklif"), ("/admin/rules", "Kurallar")] %}
+    {%- if signed_in %}
+    <a href="{{ href }}"{% if here.startswith(href) %} aria-current="page"{% endif %}>{{ label }}</a>
+    {%- else %}
+    <a href="{{ login_url(href) }}" class="locked" title="Giriş gerekli">{{ lock() }}{{ label }}<span class="visually-hidden"> (giriş gerekli)</span></a>
+    {%- endif %}
+    {%- endfor %}
+    {%- if signed_in %}
+    <form method="post" action="/logout" class="logout"><button type="submit">Çıkış</button></form>
+    {%- elif here != "/login" %}
+    <a href="{{ login_url(here) }}" class="login-link">Giriş</a>
+    {%- endif %}
+  </nav>
+</header>

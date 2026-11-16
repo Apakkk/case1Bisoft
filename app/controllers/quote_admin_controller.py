@@ -7,9 +7,10 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import ValidationError
 
 from app.clients.distance.chain import UnknownLocationError
-from app.dependencies import get_quote_service, get_rules
+from app.dependencies import get_carrier_service, get_quote_service, get_rules
 from app.schemas.quote import QuoteRequest, QuoteResponse
-from app.selection.rules import RuleSet
+from app.selection.rules import FINAL_TIE_BREAKER, RuleSet
+from app.services.carrier_service import CarrierService
 from app.services.quote_service import InvalidOrderError, QuoteService
 from app.services.rules_service import criterion_option
 from app.views import templates
@@ -18,9 +19,14 @@ router = APIRouter(prefix="/admin", include_in_schema=False)
 
 
 @router.get("/quote", response_class=HTMLResponse)
-def quote_page(request: Request, rules: Annotated[RuleSet, Depends(get_rules)]) -> Response:
-    ranking = [criterion_option(name).label for name in rules.ranking]
-    return templates.TemplateResponse(request, "quote/index.html", {"catalog": rules, "ranking": ranking})
+def quote_page(
+    request: Request,
+    rules: Annotated[RuleSet, Depends(get_rules)],
+    carriers: Annotated[CarrierService, Depends(get_carrier_service)],
+) -> Response:
+    ranking = [criterion_option(name).label for name in rules.ranking if name != FINAL_TIE_BREAKER]
+    context = {"catalog": rules, "sizes": carriers.container_sizes(), "ranking": ranking}
+    return templates.TemplateResponse(request, "quote/index.html", context)
 
 
 @router.post("/quote", response_class=HTMLResponse)

@@ -5,6 +5,8 @@
   "no_carrier": ("bad", "Uygun firma yok"),
   "needs_confirmation": ("warn", "Onay gerekli"),
 } %}
+{#- The card shows the decision, warnings, ranking and rejections. The full explanation text and the Jev call log
+    stay in the API response (POST /api/v1/quotes: "explanation", "jev_calls", "jev_usage"). #}
 <article>
   {% if error %}
     <header><span class="badge bad">Hata</span> <code>{{ error.code }}</code></header>
@@ -39,8 +41,6 @@
       </div>
     {% endif %}
 
-    <pre class="explanation">{{ q.explanation }}</pre>
-
     {% if q.warnings %}
       <h6>Uyarılar</h6>
       <ul>{% for w in q.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
@@ -48,7 +48,7 @@
 
     {% if q.ranking %}
       <h6>Uygun firmalar (sıralı)</h6>
-      <table>
+      <div class="table-scroll"><table>
         <thead><tr><th>#</th><th>Firma</th><th>Toplam</th><th>Merkez → çıkış</th></tr></thead>
         <tbody>
         {% for r in q.ranking %}
@@ -56,34 +56,12 @@
               <td>{% if r.hq_distance_miles is not none %}{{ r.hq_distance_miles | miles }} mil <span class="muted">({{ r.hq_distance_source | distance_source }})</span>{% else %}—{% endif %}</td></tr>
         {% endfor %}
         </tbody>
-      </table>
+      </table></div>
     {% endif %}
 
     {% if q.rejected %}
       <h6>Elenenler</h6>
       <ul>{% for r in q.rejected %}<li><strong>{{ r.carrier }}</strong>: {{ r.reasons | join("; ") }}</li>{% endfor %}</ul>
-    {% endif %}
-
-    <h6>Jev çağrıları{% if q.jev_usage.requests %} <span class="muted">· {{ q.jev_usage.requests }} istek{% if q.jev_usage.cached %} ({{ q.jev_usage.cached }} tanesi önbellekten){% endif %},
-      {{ q.jev_usage.input_tokens }} giriş token'ı{% if q.jev_usage.model %}, model {{ q.jev_usage.model }}{% endif %}</span>{% endif %}</h6>
-    {% if q.jev_calls %}
-      <table>
-        <thead><tr><th>Adım</th><th>Konu</th><th>Cevap</th><th>Güven / olasılık</th><th>ms</th></tr></thead>
-        <tbody>
-        {% for j in q.jev_calls %}
-          <tr><td><code>{{ j.step }}</code></td><td>{{ j.subject }}</td><td>{{ j.answer }}</td>
-              <td>{{ "%.3f" | format(j.confidence) }}</td><td>{{ j.elapsed_ms }}</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      {% set ns = namespace(jev_down=false) %}
-      {% for w in q.warnings %}{% if "Jev" in w %}{% set ns.jev_down = true %}{% endif %}{% endfor %}
-      {% if ns.jev_down %}
-        <p class="muted">Bu siparişte Jev'e soru sorulamadı; sebebi uyarılarda.</p>
-      {% else %}
-        <p class="muted">Bu siparişte Jev çağrılmadı: sipariş açıklaması yoktu ve firma notları kısıt içermiyordu.</p>
-      {% endif %}
     {% endif %}
 
     <details>

@@ -1,4 +1,4 @@
-"""Admin rules page: reorder the ranking criteria and save them to rules.yaml (HTMX partial updates).
+"""Admin rules page: drag the ranking criteria into order and save them to rules.yaml (HTMX partial updates).
 
 Editing happens on a draft carried in the form (no server state); only "Kaydet" writes the file.
 """
@@ -43,9 +43,7 @@ def save_ranking(request: Request, service: Service, ranking: Ranking = None) ->
     except RulesError as error:
         editor = _editor(draft, service.active_ranking(), error=str(error))
     else:
-        editor = _editor(
-            draft, draft, message="Kaydedildi: config/rules.yaml güncellendi; sonraki teklifler bu sırayla."
-        )
+        editor = _editor(draft, draft, message="Kaydedildi; sonraki teklifler bu sırayla yapılacak.")
     return templates.TemplateResponse(request, "rules/_ranking.html", {"editor": editor})
 
 

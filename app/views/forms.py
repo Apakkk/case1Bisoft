@@ -1,5 +1,6 @@
 """Form view-models: raw HTML form strings in, CarrierIn/QuoteRequest out, Turkish field errors back."""
 
+import re
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 
 from app.models.carrier import Carrier
 from app.schemas.carrier import CarrierIn
+from app.selection.catalog import MAX_CONTAINER_FT
 from app.selection.formatting import fmt_miles
 
 _MESSAGES = {
@@ -19,6 +21,7 @@ _MESSAGES = {
     "int_parsing": "Geçerli bir sayı girin.",
     "greater_than": "0'dan büyük olmalı.",
     "greater_than_equal": "Negatif olamaz.",
+    "less_than_equal": f"En fazla {MAX_CONTAINER_FT} olabilir.",
     "decimal_max_places": "Çok fazla ondalık basamak.",
     "decimal_max_digits": "Sayı çok büyük.",
 }
@@ -47,7 +50,8 @@ class CarrierForm:
     rate_per_mile: str = ""
     min_miles: str = ""
     max_miles: str = ""
-    container_sizes: list[str] = field(default_factory=list)
+    container_sizes: list[str] = field(default_factory=list)  # ticked boxes
+    other_sizes: str = ""  # typed sizes outside the boxes: "48, 53"
     cargo_types: list[str] = field(default_factory=list)
     description: str = ""
 
@@ -73,7 +77,7 @@ class CarrierForm:
                 "rate_per_mile": self.rate_per_mile.strip() or None,
                 "min_miles": self.min_miles.strip() or None,
                 "max_miles": self.max_miles.strip() or None,
-                "container_sizes": self.container_sizes,
+                "container_sizes": [*self.container_sizes, *_typed_sizes(self.other_sizes)],
                 "cargo_types": self.cargo_types,
                 "description": self.description,
             }
@@ -87,6 +91,7 @@ def read_carrier_form(
     min_miles: Annotated[str, Form()] = "",
     max_miles: Annotated[str, Form()] = "",
     container_sizes: Annotated[list[str] | None, Form()] = None,
+    other_sizes: Annotated[str, Form()] = "",
     cargo_types: Annotated[list[str] | None, Form()] = None,
     description: Annotated[str, Form()] = "",
 ) -> CarrierForm:
@@ -97,6 +102,13 @@ def read_carrier_form(
         min_miles=min_miles,
         max_miles=max_miles,
         container_sizes=container_sizes or [],
+        other_sizes=other_sizes,
         cargo_types=cargo_types or [],
         description=description,
     )
+
+
+def _typed_sizes(text: str) -> list[str]:
+    """Typed sizes: "48, 53 ft" -> ["48", "53"]. Anything else is passed on as typed, so validation reports it."""
+    without_units = re.sub(r"\s*(?:feet|ft|')", "", text, flags=re.IGNORECASE)
+    return [token for token in re.split(r"[,;\s]+", without_units) if token]

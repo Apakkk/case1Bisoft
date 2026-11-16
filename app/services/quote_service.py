@@ -26,6 +26,7 @@ from app.models.quote import JevCall, JevUsage, QuoteStatus, ResolvedOrder
 from app.repositories.carrier_repository import CarrierRepository
 from app.repositories.rules_repository import RulesSource
 from app.schemas.quote import QuoteRequest
+from app.selection.catalog import container_sizes
 from app.selection.consistency import (
     FIELD_LABELS,
     Mismatch,
@@ -121,7 +122,8 @@ class QuoteService:
         if self._rules.problem:
             trace.warnings.append(self._rules.problem)
         order_note = (request.description or "").strip()
-        resolved = self._resolve_order(request, rules, trace)
+        carriers = self._carriers.list()
+        resolved = self._resolve_order(request, rules, container_sizes(rules, carriers), trace)
         if resolved.container_size is None or resolved.cargo_type is None:
             return self._needs_input(resolved, trace)
         if trace.mismatches:
@@ -140,7 +142,6 @@ class QuoteService:
             order.origin, order.destination, approximate_factor=rules.distance.approximate_factor
         )
         trace.warnings.extend(distance.warnings)
-        carriers = self._carriers.list()
         filtered = filter_carriers(carriers, order, distance.miles, rules)
 
         candidates = filtered.eligible
@@ -190,7 +191,10 @@ class QuoteService:
 
     # --- order interpretation -------------------------------------------------------------
 
-    def _resolve_order(self, request: QuoteRequest, rules: RuleSet, trace: _Trace) -> ResolvedOrder:
+    def _resolve_order(
+        self, request: QuoteRequest, rules: RuleSet, sizes: tuple[int, ...], trace: _Trace
+    ) -> ResolvedOrder:
+        """`sizes`: the standard sizes plus every size a carrier carries (`catalog.container_sizes`)."""
         text = (request.description or "").strip()
         if (request.container_size is None or request.cargo_type is None) and not text:
             raise InvalidOrderError("send container_size and cargo_type, or describe the cargo in description")
@@ -200,15 +204,15 @@ class QuoteService:
 
         inferred: dict[str, str] = {}
         size = request.container_size
-        if size is not None and size not in rules.container_sizes:
-            allowed = ", ".join(map(str, rules.container_sizes))
-            raise InvalidOrderError(f"container_size {size} is not in the catalog ({allowed})")
+        if size is not None and size not in sizes:
+            allowed = ", ".join(map(str, sizes))
+            raise InvalidOrderError(f"container_size {size} is not carried by any carrier (known sizes: {allowed})")
         if size is None:
-            size = parse_container_size(text, rules.container_sizes)  # deterministic first
+            size = parse_container_size(text, sizes)  # deterministic first
             if size is not None:
                 inferred["container_size"] = "text"
         elif text:  # an entered size is checked against a size stated in the text, without Jev
-            mismatch = size_mismatch(size, parse_container_size(text, rules.container_sizes))
+            mismatch = size_mismatch(size, parse_container_size(text, sizes))
             if mismatch is not None:
                 trace.mismatches.append(mismatch)
 
@@ -221,7 +225,9 @@ class QuoteService:
                 )
 
         if size is None or cargo is None or text:  # with an entered cargo type the text is only checked
-            jev_size, jev_cargo = self._interpret(text, rules, need_size=size is None, cargo=cargo, trace=trace)
+            jev_size, jev_cargo = self._interpret(
+                text, rules, sizes if size is None else None, cargo=cargo, trace=trace
+            )
             if size is None and jev_size is not None:
                 size, inferred["container_size"] = jev_size, "jev"
             if cargo is None and jev_cargo is not None:
@@ -243,19 +249,21 @@ class QuoteService:
         )
 
     def _interpret(
-        self, text: str, rules: RuleSet, *, need_size: bool, cargo: str | None, trace: _Trace
+        self, text: str, rules: RuleSet, sizes: tuple[int, ...] | None, *, cargo: str | None, trace: _Trace
     ) -> tuple[int | None, str | None]:
         """One Jev request on the description alone: fill missing fields, and check an entered cargo type.
 
         Jev is shown the text only, never the entered cargo type, so it cannot simply agree with the form.
-        Returns the size and cargo type Jev filled in (None for an entered field).
+        Returns the size and cargo type Jev filled in (None for an entered field). `sizes`: the choices
+        when the size is missing, else None.
         """
+        need_size = sizes is not None
         need_cargo = cargo is None
         if self._jev is None:
             self._not_interpreted("Jev yapılandırılmamış", need_size or need_cargo, not need_cargo, trace)
             return None, None
         try:
-            result = self._jev.classify_order(text, rules.cargo_types, rules.container_sizes if need_size else None)
+            result = self._jev.classify_order(text, rules.cargo_types, sizes)
         except JevUnavailableError:
             self._not_interpreted("Jev'e ulaşılamadı", need_size or need_cargo, not need_cargo, trace)
             return None, None

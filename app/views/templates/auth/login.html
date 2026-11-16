@@ -1,26 +1,38 @@
 <!doctype html>
-<html lang="tr">
+<html lang="tr" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Giriş · Taşıyıcı Seçimi</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="{{ url_for('static', path='pico.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='shell.css') }}">
   <style>
-    body { min-height: 100svh; display: grid; place-items: center; padding: 1rem; }
-    main.login { width: 100%; max-width: 24rem; padding: 0; }
-    main.login article { margin: 0; }
+    /* The showroom's backdrop and top bar (shell.css); the form on the same dark glass as the admin pages. */
+    body.shell {
+      --pico-font-family: var(--font);
+      --pico-background-color: transparent;
+      --pico-form-element-background-color: rgba(4, 6, 11, 0.55);
+      min-height: 100svh; display: flex; flex-direction: column;
+    }
+    main.login { position: relative; z-index: 1; flex: 1; display: grid; place-items: center; padding: 0 16px 10svh; }
+    main.login article {
+      width: 100%; max-width: 24rem; margin: 0; padding: 28px;
+      background: rgba(8, 11, 18, 0.66); border: 1px solid var(--line); border-radius: 20px; box-shadow: none;
+      -webkit-backdrop-filter: blur(18px) saturate(1.15); backdrop-filter: blur(18px) saturate(1.15);
+    }
     main.login h1 { font-size: 1.4rem; margin-bottom: .3rem; }
-    main.login p.muted { color: var(--pico-muted-color); font-size: .9rem; margin-bottom: 1.4rem; }
-    .login-error { color: #b42318; background: rgba(180, 35, 24, .1); border-radius: var(--pico-border-radius);
+    main.login p.muted { color: var(--muted); font-size: .9rem; margin-bottom: 1.4rem; }
+    .login-error { color: #ff9b91; background: rgba(180, 35, 24, .18); border-radius: var(--pico-border-radius);
       padding: .55rem .8rem; font-size: .9rem; margin-bottom: 1rem; }
-    @media (prefers-color-scheme: dark) { .login-error { color: #ff9b91; } }
   </style>
 </head>
-<body>
+<body class="shell">
+  {% include "_backdrop.html" %}
+  {% include "_topbar.html" %}
   <main class="login">
     <article>
-      <h1>Taşıyıcı Seçimi</h1>
+      <h1>Giriş</h1>
       <p class="muted">Devam etmek için giriş yapın.</p>
       {% if error %}<div class="login-error" role="alert">{{ error }}</div>{% endif %}
       <form method="post" action="/login">

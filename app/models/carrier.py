@@ -37,3 +37,15 @@ class Carrier:
         if self.note_confidence is None:
             return self.note_status is not NoteStatus.NONE
         return self.note_confidence > 1 - auto_accept
+
+    def note_uncertain(self, auto_accept: float) -> bool:
+        """Jev was not sure either way (between the two cut-offs): shown as "Belirsiz", not as a restriction.
+
+        Such a note is still sent with every order (`note_may_restrict`); only the label differs from a note
+        Jev judged restrictive with confidence (P >= auto_accept).
+        """
+        return (
+            self.note_may_restrict(auto_accept)
+            and self.note_confidence is not None
+            and self.note_confidence < auto_accept
+        )

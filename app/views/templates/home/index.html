@@ -7,11 +7,20 @@
   <title>Filo · Taşıyıcı Seçimi</title>
   <link rel="icon" href="data:,">
   <link rel="preload" as="image" type="image/webp" href="{{ url_for('static', path=truck.src) }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='shell.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', path='home/home.css') }}">
   <script>document.documentElement.classList.add("js");</script>
   <script src="{{ url_for('static', path='home/home.js') }}" defer></script>
 </head>
+{%- from "_lock.html" import lock %}
 {%- set first = cards[0] if cards else none %}
+{%- set signed_in = is_logged_in(request) %}
+{#- An admin link: as it is when logged in, else a locked link to the login page that returns to it. #}
+{%- macro admin_link(href, label, cls) -%}
+{%- if signed_in -%}<a class="{{ cls }}" href="{{ href }}">{{ label }}</a>
+{%- else -%}<a class="{{ cls }} locked" href="{{ login_url(href) }}" title="Giriş gerekli">{{ lock() }}{{ label }}<span class="visually-hidden"> (giriş gerekli)</span></a>
+{%- endif -%}
+{%- endmacro %}
 {#- One carrier's markings on the truck: curtain (name + rate, size stencil, cargo badges) and cab door. #}
 {%- macro markings(c) %}
             <div class="livery">
@@ -50,16 +59,7 @@
     <div class="stage-floor"></div>
   </div>
 
-  <header class="topbar">
-    <a class="brand" href="/" aria-current="page"><span class="brand-dot"></span>Taşıyıcı Seçimi</a>
-    <nav class="topnav" aria-label="Ana menü">
-      <a href="/admin/carriers">Firmalar</a>
-      <a href="/admin/quote">Teklif</a>
-      <a href="/admin/rules">Kurallar</a>
-      <a href="/docs">API</a>
-      <form method="post" action="/logout" class="logout"><button type="submit">Çıkış</button></form>
-    </nav>
-  </header>
+  {% include "_topbar.html" %}
 
   <main class="showroom-main">
   {% if cards %}
@@ -69,7 +69,7 @@
         <h1 class="hero-name" data-name>{{ first.name }}</h1>
         <p class="hero-line" data-line>{{ first.line }}</p>
         <div class="hero-actions">
-          <a class="cta" href="/admin/quote">Teklif al</a>
+          {{ admin_link("/admin/quote", "Teklif al", "cta") }}
           <button type="button" class="ghost js-only" data-open>Ayrıntılar</button>
         </div>
       </div>
@@ -103,7 +103,7 @@
         <button type="button" class="nav-btn" data-prev aria-label="Önceki firma">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
         </button>
-        <p class="drag-hint"><span>Sürükle</span><span>Kaydır</span><span>← →</span></p>
+        <p class="drag-hint">Kaydır</p>
         <button type="button" class="nav-btn" data-next aria-label="Sonraki firma">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>
         </button>
@@ -129,8 +129,8 @@
         </div>
         <p class="detail-note" data-detail-note hidden></p>
         <div class="detail-actions">
-          <a class="cta" href="/admin/quote">Teklif al</a>
-          <a class="ghost" href="/admin/carriers">Firmayı düzenle</a>
+          {{ admin_link("/admin/quote", "Teklif al", "cta") }}
+          {{ admin_link("/admin/carriers", "Firmayı düzenle", "ghost") }}
         </div>
       </div>
       <div class="facets" role="tablist" aria-orientation="vertical" aria-label="Firma bilgileri" data-facets>
@@ -154,7 +154,7 @@
         <p class="eyebrow">Filo</p>
         <h1 class="hero-name">Henüz firma yok</h1>
         <p class="hero-line">İlk taşıyıcıyı ekleyin; tırı burada, römorkunda adıyla görünür.</p>
-        <div class="hero-actions"><a class="cta" href="/admin/carriers">Firma ekle</a></div>
+        <div class="hero-actions">{{ admin_link("/admin/carriers", "Firma ekle", "cta") }}</div>
       </div>
       <div class="fleet fleet-empty">
         <div class="truck is-center">

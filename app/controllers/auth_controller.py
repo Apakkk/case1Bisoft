@@ -42,6 +42,6 @@ def login(
 
 @router.post("/logout")
 def logout() -> Response:
-    response = RedirectResponse(LOGIN_PATH, status_code=303)
+    response = RedirectResponse("/", status_code=303)  # back to the public showroom
     response.delete_cookie(COOKIE_NAME, path="/", httponly=True, samesite="lax")
     return response

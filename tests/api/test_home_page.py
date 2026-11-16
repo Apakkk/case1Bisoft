@@ -106,4 +106,30 @@ def test_home_page_assets_are_served_locally() -> None:
 
 
 def test_admin_pages_link_back_to_the_home_page() -> None:
-    assert '<a href="/">Filo</a>' in client_with(CASE_CARRIERS).get("/admin/carriers").text
+    html = client_with(CASE_CARRIERS).get("/admin/carriers").text
+
+    assert '<a class="brand" href="/">' in html  # the same top bar as the showroom
+    assert ">Filo</a>" not in html
+
+
+def test_menus_have_no_api_tab() -> None:
+    client = client_with(CASE_CARRIERS)
+
+    for path in ("/", "/admin/carriers"):
+        assert 'href="/docs"' not in client.get(path).text, path
+
+
+def test_pages_share_the_showroom_top_bar_and_backdrop() -> None:
+    client = client_with(CASE_CARRIERS)
+
+    for path in ("/", "/admin/carriers", "/admin/quote"):
+        html = client.get(path).text
+        assert '<header class="topbar">' in html and "shell.css" in html, path
+        assert "home/scene-blur.jpg" in html, path
+    assert "stage-noise" not in client.get("/admin/carriers").text  # no moving background behind forms
+
+
+def test_the_fleet_nav_only_says_scroll() -> None:
+    html = client_with(CASE_CARRIERS).get("/").text
+
+    assert '<p class="drag-hint">Kaydır</p>' in html and "Sürükle" not in html

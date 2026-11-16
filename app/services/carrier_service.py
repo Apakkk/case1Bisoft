@@ -8,6 +8,7 @@ from app.models.carrier import Carrier, NoteStatus
 from app.repositories.carrier_repository import CarrierRepository
 from app.repositories.rules_repository import RulesSource
 from app.schemas.carrier import CarrierIn
+from app.selection.catalog import container_sizes
 
 
 class CarrierNotFoundError(LookupError):
@@ -41,6 +42,10 @@ class CarrierService:
     def list(self) -> list[Carrier]:
         return self._carriers.list()
 
+    def container_sizes(self) -> tuple[int, ...]:
+        """Standard sizes plus every size a carrier carries: what the forms offer."""
+        return container_sizes(self._rules.get(), self._carriers.list())
+
     def get(self, carrier_id: int) -> Carrier:
         carrier = self._carriers.get(carrier_id)
         if carrier is None:
@@ -65,12 +70,6 @@ class CarrierService:
         rules = self._rules.get()
         errors: dict[str, str] = {}
         turkish: dict[str, str] = {}
-
-        unknown_sizes = sorted(set(data.container_sizes) - set(rules.container_sizes))
-        if unknown_sizes:
-            allowed = ", ".join(map(str, rules.container_sizes))
-            errors["container_sizes"] = f"not in the catalog: {', '.join(map(str, unknown_sizes))} (allowed: {allowed})"
-            turkish["container_sizes"] = _not_in_catalog(map(str, unknown_sizes), allowed)
 
         cargo_types: set[str] = set()
         unknown_cargo: list[str] = []
@@ -128,5 +127,5 @@ class CarrierService:
 
 
 def _not_in_catalog(values: Iterable[str], allowed: str) -> str:
-    """Screen message for a value removed from the catalog: it has to be unticked on purpose."""
+    """Screen message for a cargo type removed from the catalog: it has to be unticked on purpose."""
     return f"Katalogda yok: {', '.join(values)}. Kaydetmek için işaretini kaldırın (katalog: {allowed})."

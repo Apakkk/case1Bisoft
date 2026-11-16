@@ -19,28 +19,34 @@
     </div>
     <div class="grid">
       <label>Min mesafe (mil) <span class="muted">boş = sınırsız</span>
-        <input name="min_miles" value="{{ form.min_miles }}" inputmode="decimal"
+        <input name="min_miles" value="{{ form.min_miles }}" type="number" min="0" step="0.1" inputmode="decimal" data-nonnegative
                {% if errors.min_miles %}aria-invalid="true"{% endif %}>
         {% if errors.min_miles %}<small class="error">{{ errors.min_miles }}</small>{% endif %}
       </label>
       <label>Max mesafe (mil) <span class="muted">boş = sınırsız</span>
-        <input name="max_miles" value="{{ form.max_miles }}" inputmode="decimal"
+        <input name="max_miles" value="{{ form.max_miles }}" type="number" min="0" step="0.1" inputmode="decimal" data-nonnegative
                {% if errors.max_miles %}aria-invalid="true"{% endif %}>
         {% if errors.max_miles %}<small class="error">{{ errors.max_miles }}</small>{% endif %}
       </label>
     </div>
-    <fieldset class="inline">
+    <fieldset class="inline" data-size-picker>
       <legend>Konteyner (ft)</legend>
-      {% for size in catalog.container_sizes %}
+      {# Standard sizes plus every size some carrier already carries. "+" (static/size-picker.js) adds a ticked box
+         for a new size; a size typed but not added is still saved (the server reads other_sizes). #}
+      {% set offered = sizes|map("string")|list %}
+      {% for size in sizes %}
         <label><input type="checkbox" name="container_sizes" value="{{ size }}"
                {% if size|string in form.container_sizes %}checked{% endif %}> {{ size }}</label>
       {% endfor %}
-      {# A value removed from the catalog stays visible: saving must not drop it silently. #}
-      {% set catalog_sizes = catalog.container_sizes|map("string")|list %}
-      {% for size in form.container_sizes if size not in catalog_sizes %}
-        <label><input type="checkbox" name="container_sizes" value="{{ size }}" checked>
-          {{ size }} <small class="error">katalogda yok</small></label>
+      {% for size in form.container_sizes if size not in offered %}
+        <label><input type="checkbox" name="container_sizes" value="{{ size }}" checked> {{ size }}</label>
       {% endfor %}
+      <span class="size-add">
+        <input name="other_sizes" value="{{ form.other_sizes }}" inputmode="numeric" placeholder="ft" data-size-input
+               aria-label="Yeni konteyner ölçüsü (ft)" {% if errors.container_sizes %}aria-invalid="true"{% endif %}>
+        <button type="button" class="secondary outline" data-size-add title="Ölçüyü ekle" aria-label="Ölçüyü ekle">+</button>
+      </span>
+      <small class="error" data-size-error hidden></small>
       {% if errors.container_sizes %}<small class="error">{{ errors.container_sizes }}</small>{% endif %}
     </fieldset>
     <fieldset class="inline">

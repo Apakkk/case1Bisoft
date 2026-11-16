@@ -11,10 +11,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_quote_service, get_rules, get_rules_service
+from app.dependencies import get_carrier_service, get_quote_service, get_rules, get_rules_service
 from app.main import create_app
 from app.models.carrier import Carrier
 from app.repositories.rules_repository import FileRulesRepository
+from app.services.carrier_service import CarrierService
 from app.services.quote_service import QuoteService
 from app.services.rules_service import RulesService
 from tests.case_data import CASE_CARRIERS
@@ -42,6 +43,7 @@ def screen(tmp_path: Path) -> Iterator[Screen]:
     app.dependency_overrides[get_rules_service] = lambda: RulesService(store)
     app.dependency_overrides[get_rules] = lambda: store.get()
     app.dependency_overrides[get_quote_service] = lambda: QuoteService(repo, offline_distances(), store)
+    app.dependency_overrides[get_carrier_service] = lambda: CarrierService(repo, offline_distances(), store)
     yield Screen(logged_in(app), path)
 
 
@@ -53,14 +55,30 @@ def test_page_shows_the_current_order_and_the_fixed_tie_breaker(screen: Screen) 
     html = screen.client.get("/admin/rules").text
 
     assert order_of(html) == ["total_cost", "hq_proximity"]  # a requested carrier is not a rule
-    assert "Sipariş açıklamasında bir firma istenirse" in html and "+ Sipariş" not in html
+    assert "+ Sipariş" not in html
     assert "Firma adı" in html and "her zaman son eşitlik bozucu" in html
-    assert "Zorunlu kısıtlar" in html
+    assert "Jev güven eşikleri" in html and "≥ 0.85" in html
 
 
-def test_arrows_change_the_draft_without_saving(screen: Screen) -> None:
+def test_page_shows_only_the_ranking_and_jev_thresholds_in_plain_words(screen: Screen) -> None:
+    html = screen.client.get("/admin/rules").text
+
+    for raw in (
+        "Diğer kurallar",
+        "Yük tipleri",
+        "Konteyner ölçüleri",
+        "<code>",
+        "Zorunlu kısıtları",
+        "bir firma istenirse",
+    ):
+        assert raw not in html
+    assert "data-grip" in html and "ranking-sort.js" in html  # drag and drop, no arrow buttons
+    assert "up:" not in html and "down:" not in html
+
+
+def test_a_dragged_order_changes_the_draft_without_saving(screen: Screen) -> None:
     before = screen.path.read_text()
-    form = {"ranking": ["total_cost", "hq_proximity"], "op": "up:hq_proximity"}
+    form = {"ranking": ["hq_proximity", "total_cost"]}  # what the form posts after a row was dragged up
 
     html = screen.client.post("/admin/rules/ranking/draft", data=form).text
 
@@ -74,7 +92,7 @@ def test_saving_writes_rules_yaml_and_the_next_quote_uses_it(screen: Screen) -> 
 
     html = screen.client.post("/admin/rules/ranking", data={"ranking": ["hq_proximity", "total_cost"]}).text
 
-    assert "Kaydedildi" in html
+    assert "Kaydedildi" in html and "Kaydedilmemiş" not in html
     assert "ranking:\n  - hq_proximity\n  - total_cost\n  - name\n" in screen.path.read_text()
     data = screen.client.post("/api/v1/quotes", json=ORDER).json()
     assert (data["carrier"], data["total_cost"]) == ("X-Logistics", "705.00")
@@ -94,8 +112,10 @@ def test_saving_with_every_criterion_removed_is_refused(screen: Screen) -> None:
 def test_quote_page_shows_the_current_priority(screen: Screen) -> None:
     html = screen.client.get("/admin/quote").text
 
-    assert "Toplam ücret → Merkezin çıkış noktasına uzaklığı → Firma adı" in html
+    assert "Geçerli öncelik: Toplam ücret → Merkezin çıkış noktasına uzaklığı ·" in html
+    assert "Firma adı" not in html  # the fixed tie-breaker is not shown here
     assert "Sipariş açıklamasında istenen firma varsa ve uygunsa önce o önerilir." in html
+    assert "/api/v1/quotes" not in html and "S-Logistics ile çalışmak istemiyorum" not in html
 
 
 def test_a_broken_file_keeps_the_last_good_rules_and_the_page_says_so(screen: Screen) -> None:

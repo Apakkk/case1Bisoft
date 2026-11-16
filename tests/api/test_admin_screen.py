@@ -1,5 +1,6 @@
 """Admin screen (Jinja2 + HTMX) over TestClient with fakes: pages render, forms validate, saves refresh rows."""
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
@@ -53,6 +54,7 @@ def test_list_page_shows_every_carrier(screen: Screen) -> None:
         assert name in html
     assert "Sınırsız" in html  # M-Logistics has no distance limit
     assert "≤ 300 mil" in html and "≥ 250 mil" in html
+    assert "<p>Firma açıklaması kaydedilirken Jev kısıt içerip içermediğini kontrol eder.</p>" in html
 
 
 def test_admin_root_redirects_to_the_carriers_screen(screen: Screen) -> None:
@@ -75,11 +77,53 @@ def test_new_form_offers_catalog_checkboxes(screen: Screen) -> None:
         assert value in html
 
 
+def test_distance_boxes_take_only_non_negative_numbers(screen: Screen) -> None:
+    html = screen.client.get("/admin/carriers/new").text
+
+    for name in ("min_miles", "max_miles"):
+        assert f'name="{name}" value="" type="number" min="0" step="0.1" inputmode="decimal" data-nonnegative' in html
+    assert "number-input.js" in screen.client.get("/admin/carriers").text
+
+
+@pytest.mark.parametrize(("typed", "message"), [("abc", "Geçerli bir sayı girin."), ("-5", "Negatif olamaz.")])
+def test_the_server_still_refuses_a_bad_distance(screen: Screen, typed: str, message: str) -> None:
+    html = screen.client.post("/admin/carriers", data={**VALID, "min_miles": typed}).text
+
+    assert message in html and len(screen.repo.list()) == 4
+
+
+def test_the_size_box_adds_sizes_with_a_plus_button(screen: Screen) -> None:
+    html = screen.client.get("/admin/carriers/new").text
+
+    assert "data-size-add" in html and ">+</button>" in html
+    assert "Diğer" not in html
+    assert "size-picker.js" in screen.client.get("/admin/carriers").text  # the page the form opens in
+
+
+def test_a_typed_size_is_saved_and_then_offered_on_both_forms(screen: Screen) -> None:
+    html = screen.client.post("/admin/carriers", data={**VALID, "other_sizes": "53 ft, 48"}).text
+
+    assert "K-Logistics kaydedildi." in html
+    k = next(c for c in screen.repo.list() if c.name == "K-Logistics")
+    assert k.container_sizes == {20, 40, 48, 53}
+    assert 'value="53"' in screen.client.get("/admin/carriers/new").text
+    assert '<option value="53"' in screen.client.get("/admin/quote").text
+
+
+@pytest.mark.parametrize(("typed", "message"), [("abc", "Geçerli bir sayı girin."), ("150", "En fazla 99 olabilir.")])
+def test_an_invalid_typed_size_is_a_turkish_field_error(screen: Screen, typed: str, message: str) -> None:
+    html = screen.client.post("/admin/carriers", data={**VALID, "other_sizes": typed}).text
+
+    assert message in html and f'value="{typed}"' in html
+    assert len(screen.repo.list()) == 4
+
+
 def test_create_refreshes_the_table_out_of_band(screen: Screen) -> None:
     html = screen.client.post("/admin/carriers", data=VALID).text
 
     assert "K-Logistics kaydedildi." in html
-    assert 'id="carrier-rows" hx-swap-oob="true"' in html
+    # Inside <template>: after the message <p>, a bare <tbody> would lose its row and cell tags in the browser.
+    assert re.search(r'<template>\s*<tbody id="carrier-rows" hx-swap-oob="true">.*</tbody>\s*</template>', html, re.S)
     assert any(c.name == "K-Logistics" and c.hq_city == "Orlando" for c in screen.repo.list())
 
 
@@ -89,6 +133,14 @@ def test_description_is_prechecked_by_jev_and_shown_as_a_badge(screen: Screen) -
     assert "Jev: açıklama kısıt içeriyor (olasılık 0.92)" in html
     assert "Kısıt içeriyor · 0.92" in html
     assert screen.jev.calls == ["note_has_restriction"]
+
+
+def test_a_note_jev_is_unsure_about_is_shown_as_uncertain(screen: Screen) -> None:
+    screen.jev.restriction = 0.24  # e.g. "Nationwide network, all cargo types."
+    html = screen.client.post("/admin/carriers", data={**VALID, "description": "Her şey taşınır."}).text
+
+    assert "Jev emin değil (kısıt olasılığı 0.24); açıklama siparişlerde kontrol edilecek." in html
+    assert "Belirsiz · 0.24" in html and "Kısıt içeriyor · 0.24" not in html
 
 
 def test_invalid_form_comes_back_with_turkish_field_errors(screen: Screen) -> None:
@@ -162,7 +214,9 @@ def test_quote_form_shows_the_decision(screen: Screen) -> None:
 
     assert "B-Logistics" in html and "$660.00" in html
     assert "Seçildi" in html
-    assert "Bu siparişte Jev çağrılmadı" in html
+    # The explanation text and the Jev log stay in the API answer, not on the card.
+    assert "Rota Miami" not in html and "Jev çağrı" not in html and "Güven / olasılık" not in html
+    assert "Yorumlanan sipariş" in html
 
 
 def test_quote_form_sends_the_order_description_to_the_compatibility_check(screen: Screen) -> None:
@@ -173,7 +227,8 @@ def test_quote_form_sends_the_order_description_to_the_compatibility_check(scree
 
     assert screen.jev.order_notes == ["S-Logistics olmasın"]
     assert "M-Logistics" in html and "$235.00" in html
-    assert "Sipariş açıklamasıyla uyumsuz" in html and "compatibility" in html
+    assert "Sipariş açıklamasıyla uyumsuz" in html  # S-Logistics among the rejected, with the reason
+    assert "compatibility" not in html  # no Jev log on the card
 
 
 def test_quote_form_reports_unknown_cities_with_a_suggestion(screen: Screen) -> None:
@@ -217,11 +272,11 @@ def test_the_badge_follows_todays_threshold(screen: Screen) -> None:
     assert saved_as_harmless.id is not None
     screen.repo.update(saved_as_harmless.id, saved_as_harmless)
 
-    assert "Kısıt içeriyor · 0.12" not in screen.client.get("/admin/carriers").text
+    assert "· 0.12" not in screen.client.get("/admin/carriers").text  # "Kısıt yok"
 
     screen.rules.rules = default_rules(confidence={"auto_accept": 0.90, "needs_review": 0.60, "hazardous_review": 0.15})
 
-    assert "Kısıt içeriyor · 0.12" in screen.client.get("/admin/carriers").text
+    assert "Belirsiz · 0.12" in screen.client.get("/admin/carriers").text  # checked with orders, not "restricts"
 
 
 def test_a_contradicting_description_shows_a_confirmation_checkbox_that_resends_the_form(screen: Screen) -> None:
@@ -252,5 +307,5 @@ def test_without_jev_the_result_does_not_claim_there_was_no_description(screen: 
 
     html = screen.client.post("/admin/quote", data={**order, "description": "hafta sonu teslim"}).text
 
-    assert "Jev'e soru sorulamadı; sebebi uyarılarda." in html
+    assert "Uyarılar" in html and "Jev" in html  # the reason is in the warnings
     assert "sipariş açıklaması yoktu" not in html

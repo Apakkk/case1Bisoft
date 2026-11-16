@@ -4,7 +4,7 @@
 {% block content %}
 <hgroup>
   <h2>Teklif al</h2>
-  <p><code>POST /api/v1/quotes</code> ile aynı servis. Sipariş açıklaması yazılırsa Jev her uygun firmanın
+  <p>Sipariş açıklaması yazılırsa Jev her uygun firmanın
      açıklamasıyla karşılaştırır; uyumsuz firma elenir. Konteyner veya yük tipi boş bırakılırsa açıklamadan çıkarılır;
      seçilen değerle açıklama çelişirse devam etmeden önce onay istenir.</p>
 </hgroup>
@@ -17,7 +17,7 @@
     <label>Konteyner
       <select name="container_size">
         <option value="">— seçilmedi —</option>
-        {% for size in catalog.container_sizes %}<option value="{{ size }}" {% if size == 20 %}selected{% endif %}>{{ size }} ft</option>{% endfor %}
+        {% for size in sizes %}<option value="{{ size }}" {% if size == 20 %}selected{% endif %}>{{ size }} ft</option>{% endfor %}
       </select>
     </label>
     <label>Yük tipi
@@ -27,8 +27,7 @@
       </select>
     </label>
   </div>
-  <label>Sipariş açıklaması <span class="muted">opsiyonel; ör. "20'lik konteynerde donmuş karides",
-    "S-Logistics ile çalışmak istemiyorum"</span>
+  <label>Sipariş açıklaması <span class="muted">opsiyonel; ör. "20'lik konteynerde donmuş karides"</span>
     <textarea name="description" rows="2"></textarea>
   </label>
   <button type="submit">Teklif al</button>

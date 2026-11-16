@@ -1,23 +1,25 @@
-{# Draft editor: the order travels in hidden inputs; arrows re-render the draft, only "Kaydet" writes the file. #}
-<form id="ranking-editor" hx-target="this" hx-swap="outerHTML">
-  <table>
-    <thead><tr><th>#</th><th>Kriter</th><th></th></tr></thead>
-    <tbody>
+{# Draft editor: the order travels in hidden inputs. Dragging a row (ranking-sort.js) moves it with its input and
+   fires "reordered", which posts the draft back so numbering and the save state are re-rendered by the server.
+   Only "Kaydet" writes the file. #}
+<form id="ranking-editor" hx-post="/admin/rules/ranking/draft" hx-trigger="reordered" hx-target="this" hx-swap="outerHTML">
+  <table class="ranking">
+    <thead><tr><th></th><th>#</th><th>Kriter</th><th></th></tr></thead>
+    <tbody data-sortable>
     {% for c in editor["items"] %}
-      <tr>
-        <td>{{ loop.index }}</td>
-        <td><input type="hidden" name="ranking" value="{{ c.key }}"><strong>{{ c.label }}</strong> <code class="muted">{{ c.key }}</code></td>
+      <tr data-key="{{ c.key }}">
+        <td class="grip-cell"><button type="button" class="grip" data-grip
+              aria-label="{{ c.label }}: sırayı değiştirmek için sürükleyin (klavyede ↑ / ↓)" title="Sürükleyin">⠿</button></td>
+        <td class="pos">{{ loop.index }}</td>
+        <td><input type="hidden" name="ranking" value="{{ c.key }}"><strong>{{ c.label }}</strong></td>
         <td class="actions">
-          <button type="button" class="secondary outline" title="Yukarı" hx-post="/admin/rules/ranking/draft"
-                  hx-vals='{"op": "up:{{ c.key }}"}' {% if loop.first %}disabled{% endif %}>↑</button>
-          <button type="button" class="secondary outline" title="Aşağı" hx-post="/admin/rules/ranking/draft"
-                  hx-vals='{"op": "down:{{ c.key }}"}' {% if loop.last %}disabled{% endif %}>↓</button>
           <button type="button" class="secondary outline" hx-post="/admin/rules/ranking/draft"
                   hx-vals='{"op": "remove:{{ c.key }}"}'>Çıkar</button>
         </td>
       </tr>
     {% endfor %}
-      <tr class="muted"><td>{{ editor["items"] | length + 1 }}</td><td>Firma adı <code>name</code></td><td>her zaman son eşitlik bozucu</td></tr>
+    </tbody>
+    <tbody>
+      <tr class="muted"><td></td><td>{{ editor["items"] | length + 1 }}</td><td>Firma adı</td><td>her zaman son eşitlik bozucu</td></tr>
     </tbody>
   </table>
 

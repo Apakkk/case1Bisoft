@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.quote import QuoteStatus
+from app.selection.catalog import MAX_CONTAINER_FT
 from app.selection.consistency import confirmation_question
 
 if TYPE_CHECKING:
@@ -35,7 +36,9 @@ class QuoteRequest(BaseModel):
 
     origin: str = Field(min_length=1, max_length=100)
     destination: str = Field(min_length=1, max_length=100)
-    container_size: int | None = Field(default=None, gt=0, description="Feet; must be in the catalog")
+    container_size: int | None = Field(
+        default=None, gt=0, le=MAX_CONTAINER_FT, description="Feet; a standard size or one a carrier carries"
+    )
     cargo_type: str | None = Field(default=None, max_length=50, description="Catalog value, case-insensitive")
     description: str | None = Field(
         default=None,

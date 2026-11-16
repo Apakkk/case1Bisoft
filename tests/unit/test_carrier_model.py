@@ -26,3 +26,24 @@ def test_the_saved_probability_is_judged_against_todays_threshold(
     carrier = replace(M_LOGISTICS, description=description, note_status=status, note_confidence=confidence)
 
     assert carrier.note_may_restrict(auto_accept) is expected
+
+
+@pytest.mark.parametrize(
+    ("status", "confidence", "auto_accept", "uncertain"),
+    [
+        (NoteStatus.NONE, 0.12, 0.85, False),  # no restriction
+        (NoteStatus.CONSTRAINT, 0.24, 0.85, True),  # between 0.15 and 0.85: Jev is not sure
+        (NoteStatus.CONSTRAINT, 0.84, 0.85, True),
+        (NoteStatus.CONSTRAINT, 0.85, 0.85, False),  # sure: "Kısıt içeriyor"
+        (NoteStatus.UNCHECKED, None, 0.85, False),  # never checked: its own badge
+        (NoteStatus.CONSTRAINT, None, 0.85, False),  # no probability stored: a restriction
+    ],
+)
+def test_a_note_between_the_cut_offs_is_uncertain_but_still_checked(
+    status: NoteStatus, confidence: float | None, auto_accept: float, uncertain: bool
+) -> None:
+    carrier = replace(M_LOGISTICS, description="Genelde hafta içi.", note_status=status, note_confidence=confidence)
+
+    assert carrier.note_uncertain(auto_accept) is uncertain
+    if uncertain:
+        assert carrier.note_may_restrict(auto_accept)  # the label changes, the per-order check does not

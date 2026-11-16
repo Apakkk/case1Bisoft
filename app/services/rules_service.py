@@ -55,7 +55,10 @@ def available_criteria(draft: Sequence[str]) -> list[str]:
 
 
 def edit_ranking(draft: Sequence[str], op: str, saved: Sequence[str]) -> list[str]:
-    """Apply one editor action to a draft order: up:<key>, down:<key>, add:<key>, remove:<key> or reset."""
+    """Apply one editor action to a draft order: add:<key>, remove:<key> or reset.
+
+    The order itself comes from the screen (rows dragged into place); with no action the draft is only cleaned.
+    """
     items: list[str] = []
     for name in draft:  # drop unknown names, duplicates and the fixed tie-breaker
         if name in CRITERIA and name != FINAL_TIE_BREAKER and name not in items:
@@ -65,12 +68,6 @@ def edit_ranking(draft: Sequence[str], op: str, saved: Sequence[str]) -> list[st
         return list(saved)
     if action == "add" and key in available_criteria(items):
         items.append(key)
-    elif key in items:
-        i = items.index(key)
-        if action == "remove":
-            items.pop(i)
-        elif action == "up" and i > 0:
-            items[i - 1], items[i] = items[i], items[i - 1]
-        elif action == "down" and i < len(items) - 1:
-            items[i + 1], items[i] = items[i], items[i + 1]
+    elif action == "remove" and key in items:
+        items.remove(key)
     return items

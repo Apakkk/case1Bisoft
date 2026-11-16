@@ -1,3 +1,6 @@
+{#- Out of band (after a save) the rows travel inside <template>: the response starts with the message <p>, and
+    the HTML parser drops <tbody>/<tr>/<td> tags that follow it, leaving only their text. #}
+{% if oob %}<template>{% endif %}
 <tbody id="carrier-rows"{% if oob %} hx-swap-oob="true"{% endif %}>
 {% for c in carriers %}
   <tr id="carrier-{{ c.id }}">
@@ -17,6 +20,8 @@
       {#- The same rule as the quotes: the saved probability against today's threshold. #}
       {% if c.description and c.note_status == "unchecked" %}
         <span class="badge bad">Kontrol edilmedi</span>
+      {% elif c.note_uncertain(auto_accept) %}
+        <span class="badge info" title="Jev emin değil; açıklama siparişlerde kontrol edilecek">Belirsiz · {{ "%.2f" | format(c.note_confidence) }}</span>
       {% elif c.note_may_restrict(auto_accept) %}
         <span class="badge warn" title="Jev: kısıt olasılığı">Kısıt içeriyor{% if c.note_confidence is not none %} · {{ "%.2f" | format(c.note_confidence) }}{% endif %}</span>
       {% elif c.description %}
@@ -33,3 +38,4 @@
   <tr><td colspan="8" class="muted">Henüz firma yok.</td></tr>
 {% endfor %}
 </tbody>
+{% if oob %}</template>{% endif %}

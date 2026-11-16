@@ -1,5 +1,8 @@
 """Login: one middleware refuses every request without a valid session, apart from a short allowlist.
 
+The allowlist holds the showroom home page (`/`, exactly), so the site opens on it; every other page and the
+API need a login. Pages show locked links to them while logged out (`is_logged_in`).
+
 Browsers log in on /login and get a signed cookie (stdlib HMAC, no server-side store). API clients may send
 the same credentials as HTTP Basic instead (curl -u, scripts/run_case_orders.py). New routes are protected
 without doing anything: the allowlist is the only way out.
@@ -26,7 +29,8 @@ logger = logging.getLogger(__name__)
 COOKIE_NAME = "session"
 SESSION_SECONDS = 8 * 60 * 60
 LOGIN_PATH = "/login"
-PUBLIC_PATHS = frozenset({"/health", LOGIN_PATH, "/logout"})  # /health: the Docker healthcheck has no login
+# "/": the showroom is the public front page. /health: the Docker healthcheck has no login.
+PUBLIC_PATHS = frozenset({"/", "/health", LOGIN_PATH, "/logout"})
 PUBLIC_PREFIXES = ("/static/",)
 API_PREFIX = "/api/"
 
@@ -149,3 +153,8 @@ def install_auth(app: FastAPI, auth: Auth) -> None:
 def get_auth(request: Request) -> Auth:
     auth: Auth = request.app.state.auth
     return auth
+
+
+def is_logged_in(request: Request) -> bool:
+    """For pages that render differently while logged out (the public home page, the shared top bar)."""
+    return get_auth(request).is_valid(request.cookies.get(COOKIE_NAME))

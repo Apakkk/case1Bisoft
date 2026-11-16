@@ -19,7 +19,9 @@ ranking:
   - hq_proximity
   - name
 
-# Allowed values for orders and carriers. Adding a cargo type or container size is a one-line change.
+# cargo_types: the allowed values for orders and carriers (adding one is a one-line change).
+# container_sizes: the standard sizes every form offers. Carriers are not limited to them: a size a carrier
+# carries (1-99 ft, e.g. 53) is offered on orders at once.
 catalog:
   cargo_types: [Dry, Reefer, Hazardous]
   container_sizes: [20, 40, 45]

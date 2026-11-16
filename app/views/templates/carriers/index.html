@@ -3,9 +3,10 @@
 {% block content %}
 <hgroup>
   <h2>Taşıyıcı firmalar</h2>
-  <p>Firma açıklaması serbest metindir; kaydedilirken Jev kısıt içerip içermediğini kontrol eder.</p>
+  <p>Firma açıklaması kaydedilirken Jev kısıt içerip içermediğini kontrol eder.</p>
 </hgroup>
 
+<div class="table-scroll">
 <table>
   <thead>
     <tr>
@@ -15,6 +16,7 @@
   </thead>
   {% include "carriers/_rows.html" %}
 </table>
+</div>
 
 <button hx-get="/admin/carriers/new" hx-target="#editor">+ Yeni firma</button>
 <section id="editor"></section>

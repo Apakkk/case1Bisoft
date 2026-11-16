@@ -1,10 +1,14 @@
-"""API DTOs for carriers. Catalog membership (allowed sizes/types) is checked by CarrierService."""
+"""API DTOs for carriers. Cargo types must be in the catalog (CarrierService); container sizes are free."""
 
 from decimal import Decimal
+from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.carrier import Carrier, NoteStatus
+from app.selection.catalog import MAX_CONTAINER_FT
+
+ContainerFt = Annotated[int, Field(gt=0, le=MAX_CONTAINER_FT)]
 
 
 class CarrierIn(BaseModel):
@@ -12,7 +16,9 @@ class CarrierIn(BaseModel):
     hq_city: str = Field(min_length=1, max_length=100, examples=["Orlando"])
     min_miles: Decimal | None = Field(default=None, ge=0, max_digits=8, decimal_places=1, description="None = no limit")
     max_miles: Decimal | None = Field(default=None, ge=0, max_digits=8, decimal_places=1, description="None = no limit")
-    container_sizes: list[int] = Field(min_length=1, examples=[[20, 40]])
+    container_sizes: list[ContainerFt] = Field(
+        min_length=1, examples=[[20, 40]], description="Feet; any size (1-99), not only the standard ones"
+    )
     cargo_types: list[str] = Field(min_length=1, examples=[["Dry", "Reefer"]])
     rate_per_mile: Decimal = Field(gt=0, max_digits=10, decimal_places=4, examples=["0.85"])
     description: str = Field(default="", max_length=2000, description="Free text; restrictions are checked by Jev")
@@ -28,6 +34,11 @@ class CarrierIn(BaseModel):
         if not value:
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("container_sizes")
+    @classmethod
+    def _unique_sizes(cls, value: list[int]) -> list[int]:
+        return sorted(set(value))
 
     @model_validator(mode="after")
     def _range(self) -> "CarrierIn":

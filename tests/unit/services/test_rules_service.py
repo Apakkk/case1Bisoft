@@ -14,10 +14,7 @@ SAVED = ["total_cost", "hq_proximity"]
 @pytest.mark.parametrize(
     ("op", "expected"),
     [
-        ("up:hq_proximity", ["hq_proximity", "total_cost"]),
-        ("down:total_cost", ["hq_proximity", "total_cost"]),
-        ("up:total_cost", SAVED),  # already first
-        ("down:hq_proximity", SAVED),  # already last
+        ("up:hq_proximity", SAVED),  # no arrows any more: the order comes from dragged rows
         ("remove:total_cost", ["hq_proximity"]),
         ("add:total_cost", SAVED),  # already present
         ("add:requested", SAVED),  # not a rule: a requested carrier always comes first
@@ -34,6 +31,10 @@ def test_add_appends_an_unused_criterion_and_reset_restores_the_saved_order() ->
 
     assert draft == ["total_cost", "hq_proximity"]
     assert edit_ranking(["hq_proximity"], "reset", SAVED) == SAVED
+
+
+def test_a_dragged_order_is_kept_as_posted() -> None:
+    assert edit_ranking(["hq_proximity", "total_cost"], "", SAVED) == ["hq_proximity", "total_cost"]
 
 
 def test_unknown_duplicate_and_fixed_names_are_dropped_from_a_posted_draft() -> None:

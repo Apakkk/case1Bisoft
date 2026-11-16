@@ -1,15 +1,41 @@
 <!doctype html>
-<html lang="tr">
+<html lang="tr" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Taşıyıcı Seçimi{% endblock %}</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="{{ url_for('static', path='pico.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='shell.css') }}">
   <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
   <script src="{{ url_for('static', path='city-autocomplete.js') }}" defer></script>
+  <script src="{{ url_for('static', path='size-picker.js') }}" defer></script>
+  <script src="{{ url_for('static', path='number-input.js') }}" defer></script>
   <style>
     :root { --pico-font-size: 95%; }
-    nav { border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1.5rem; }
+    /* The showroom's backdrop and top bar (shell.css); the page sits on a dark glass panel over it. */
+    body.shell {
+      --pico-font-family: var(--font);
+      --pico-background-color: transparent;
+      --pico-card-background-color: rgba(255, 255, 255, 0.035);
+      --pico-card-sectioning-background-color: rgba(255, 255, 255, 0.05);
+      --pico-form-element-background-color: rgba(4, 6, 11, 0.55);
+      --pico-primary: #7ee9ff;
+      --pico-primary-hover: #b8f4ff;
+      --pico-primary-underline: rgba(126, 233, 255, 0.5);
+      --pico-muted-border-color: rgba(255, 255, 255, 0.09);
+      --pico-table-border-color: rgba(255, 255, 255, 0.09);
+    }
+    main.shell-main {
+      position: relative; z-index: 1;
+      margin-bottom: 48px; padding: clamp(20px, 3vw, 36px);
+      background: rgba(8, 11, 18, 0.66); border: 1px solid var(--line); border-radius: 20px;
+      -webkit-backdrop-filter: blur(18px) saturate(1.15); backdrop-filter: blur(18px) saturate(1.15);
+    }
+    @media (max-width: 575px) { main.shell-main { width: auto; margin-inline: 12px; } }
+    /* Wide tables scroll inside the panel on a phone instead of widening the page. */
+    .table-scroll { overflow-x: auto; margin-bottom: var(--pico-spacing); }
+    .table-scroll > table { margin-bottom: 0; }
     table td, table th { vertical-align: top; }
     .badge { display: inline-block; padding: .1rem .5rem; border-radius: 1rem; font-size: .8rem; white-space: nowrap; }
     .badge.ok { background: #e3f5e8; color: #1d6b34; }
@@ -17,14 +43,25 @@
     .badge.bad { background: #fde4e4; color: #9b1c1c; }
     .badge.info { background: #e6eefc; color: #1f4fa3; }
     .muted { color: var(--pico-muted-color); font-size: .85rem; }
-    .error { color: #b42318; font-size: .85rem; margin-top: -.6rem; margin-bottom: .8rem; display: block; }
+    .error { color: #ff8a80; font-size: .85rem; margin-top: -.6rem; margin-bottom: .8rem; display: block; }
     .actions { display: flex; gap: .4rem; }
     .actions button { padding: .25rem .6rem; margin: 0; font-size: .85rem; }
     fieldset.inline label { display: inline-flex; margin-right: 1rem; }
+    /* Carrier form: "+" adds a container size (static/size-picker.js) */
+    fieldset.inline .size-add { display: inline-flex; align-items: center; gap: .3rem; vertical-align: middle; }
+    fieldset.inline .size-add input { width: 4.5rem; margin: 0; padding: .2rem .5rem; height: auto; }
+    fieldset.inline .size-add button { width: auto; margin: 0; padding: .2rem .65rem; line-height: 1.2; }
+    .error[hidden] { display: none; }
     .htmx-request { opacity: .6; transition: opacity .2s; }
-    nav form.logout { margin: 0; }
-    nav form.logout button { padding: .2rem .7rem; margin: 0; font-size: .85rem; width: auto; }
-    pre.explanation { white-space: pre-wrap; font-family: inherit; }
+    /* Rules page: drag-and-drop ranking (static/ranking-sort.js) */
+    table.ranking td.grip-cell { width: 2.5rem; padding-right: 0; }
+    table.ranking .grip { all: unset; cursor: grab; touch-action: none; user-select: none; font-size: 1.2rem; line-height: 1;
+      padding: .2rem .4rem; border-radius: var(--pico-border-radius); color: var(--pico-muted-color); }
+    table.ranking .grip:hover { color: var(--pico-color); background: var(--pico-muted-border-color); }
+    table.ranking .grip:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 1px; }
+    table.ranking tr.dragging td { background: var(--pico-primary-focus); }
+    table.ranking tr.dragging .grip { cursor: grabbing; }
+    body:has(tr.dragging) { cursor: grabbing; user-select: none; }
     .confirmation { border-left: 4px solid #e0a100; background: rgba(224, 161, 0, .12); padding: .8rem 1rem;
       border-radius: var(--pico-border-radius); margin-bottom: 1rem; }
     .confirmation form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: 0 0 .5rem; }
@@ -49,23 +86,14 @@
     .city-tag { font-size: .65rem; letter-spacing: .04em; padding: 0 .4rem; border-radius: 1rem;
       border: 1px solid currentColor; color: var(--pico-primary); opacity: .85; }
     .city-list li.city-note { font-size: .8rem; color: var(--pico-muted-color); }
-    .city-list li.city-note.warn { color: #8a5a00; }
+    .city-list li.city-note.warn { color: #ffcf70; }
     .city-list li[role="option"] + li.city-note { border-top: 1px solid var(--pico-muted-border-color); margin-top: .2rem; }
   </style>
 </head>
-<body>
-  <main class="container">
-    <nav>
-      <ul><li><strong>Taşıyıcı Seçimi</strong></li></ul>
-      <ul>
-        <li><a href="/">Filo</a></li>
-        <li><a href="/admin/carriers">Firmalar</a></li>
-        <li><a href="/admin/quote">Teklif</a></li>
-        <li><a href="/admin/rules">Kurallar</a></li>
-        <li><a href="/docs">API</a></li>
-        <li><form method="post" action="/logout" class="logout"><button type="submit" class="secondary outline">Çıkış</button></form></li>
-      </ul>
-    </nav>
+<body class="shell">
+  {% include "_backdrop.html" %}
+  {% include "_topbar.html" %}
+  <main class="container shell-main">
     {% block content %}{% endblock %}
   </main>
 </body>

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.templating import Jinja2Templates
 
+from app.auth import is_logged_in, login_url
 from app.selection.formatting import fmt_miles, fmt_money, fmt_rate
 
 VIEWS_DIR = Path(__file__).parent
@@ -32,3 +33,5 @@ templates = Jinja2Templates(directory=VIEWS_DIR / "templates")
 templates.env.filters.update(
     money=fmt_money, miles=fmt_miles, rate=fmt_rate, distance_source=distance_source, place=place
 )
+# The shared top bar (_topbar.html) and the home page show locked links while logged out.
+templates.env.globals.update(is_logged_in=is_logged_in, login_url=login_url)

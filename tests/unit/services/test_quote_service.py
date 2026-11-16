@@ -71,7 +71,7 @@ def test_missing_field_without_jev_asks_for_input() -> None:
 @pytest.mark.parametrize(
     ("size", "cargo", "message"),
     [
-        (53, "Dry", "container_size 53 is not in the catalog"),
+        (53, "Dry", "container_size 53 is not carried by any carrier"),
         (40, "Flatrack", "cargo_type 'Flatrack' is not in the catalog"),
         (None, "Dry", "describe the cargo"),
     ],
@@ -79,6 +79,18 @@ def test_missing_field_without_jev_asks_for_input() -> None:
 def test_orders_outside_the_catalog_are_rejected(size: int | None, cargo: str, message: str) -> None:
     with pytest.raises(InvalidOrderError, match=message):
         service().quote(request("Miami", "Atlanta", size, cargo))
+
+
+def test_a_size_one_carrier_carries_is_valid_for_orders_and_read_from_text() -> None:
+    k53 = Carrier("K-Logistics", "Miami", None, None, frozenset({53}), frozenset({"Dry"}), Decimal("1.00"))
+    carriers = service((*CASE_CARRIERS, k53))
+
+    entered = carriers.quote(request("Miami", "Orlando", 53, "Dry"))
+    parsed = carriers.quote(request("Miami", "Orlando", None, "Dry", "53 ft konteyner"))
+
+    for quote in (entered, parsed):
+        assert quote.selected is not None and quote.selected.carrier.name == "K-Logistics"
+    assert parsed.order.inferred == {"container_size": "text"}
 
 
 def test_new_cargo_type_only_needs_a_catalog_entry() -> None:
