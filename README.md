@@ -71,10 +71,3 @@ make test-db     # 29 test, PostgreSQL'e karşı
 
 Testlerde Jev ve harita servisi sahtedir; 7 örnek sipariş birim, API ve uçtan uca testlerde doğrulanır.
 
-
-## Varsayımlar
-
-- "Çıkış noktasına en yakın", firma merkezinin çıkış şehrine uzaklığıdır.
-- Mesafe sınırları dahildir; boş sınır sınırsız demektir.
-- Yalnızca ABD şehirleri; bir teklif tek konteyner içindir.
-- Güven eşikleri başlangıç değerleridir, etiketli veriyle kalibre edilmedi.
